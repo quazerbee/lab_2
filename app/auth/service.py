@@ -1,11 +1,13 @@
 from datetime import datetime, timedelta
 
 from fastapi import HTTPException, status
+from jose import JWTError
 from sqlalchemy.orm import Session
 
 from app.auth.security import (
     create_access_token,
     create_refresh_token,
+    decode_refresh_token,
     generate_salt,
     hash_password,
     hash_token,
@@ -99,3 +101,91 @@ def login_user(db: Session, data: LoginRequest) -> tuple[User, str, str]:
     db.commit()
 
     return user, access_token, refresh_token
+
+def refresh_user_tokens(db: Session, refresh_token: str | None) -> tuple[User, str, str]:
+    if not refresh_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token is missing",
+        )
+
+    try:
+        payload = decode_refresh_token(refresh_token)
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token",
+        )
+
+    token_type = payload.get("type")
+    user_id = payload.get("sub")
+
+    if token_type != "refresh" or not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token",
+        )
+
+    old_refresh_record = (
+        db.query(AuthToken)
+        .filter(AuthToken.token_hash == hash_token(refresh_token))
+        .filter(AuthToken.token_type == "refresh")
+        .filter(AuthToken.revoked.is_(False))
+        .filter(AuthToken.expires_at > datetime.utcnow())
+        .first()
+    )
+
+    if not old_refresh_record:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token was revoked or expired",
+        )
+
+    user = (
+        db.query(User)
+        .filter(User.id == int(user_id))
+        .filter(User.deleted_at.is_(None))
+        .first()
+    )
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+        )
+
+    db.query(AuthToken).filter(AuthToken.user_id == user.id).filter(
+        AuthToken.revoked.is_(False)
+    ).update({"revoked": True})
+
+    token_payload = {
+        "sub": str(user.id),
+        "email": user.email,
+    }
+
+    new_access_token = create_access_token(token_payload)
+    new_refresh_token = create_refresh_token(token_payload)
+
+    access_token_record = AuthToken(
+        user_id=user.id,
+        token_hash=hash_token(new_access_token),
+        token_type="access",
+        expires_at=datetime.utcnow()
+        + timedelta(minutes=settings.JWT_ACCESS_EXPIRE_MINUTES),
+        revoked=False,
+    )
+
+    refresh_token_record = AuthToken(
+        user_id=user.id,
+        token_hash=hash_token(new_refresh_token),
+        token_type="refresh",
+        expires_at=datetime.utcnow()
+        + timedelta(days=settings.JWT_REFRESH_EXPIRE_DAYS),
+        revoked=False,
+    )
+
+    db.add(access_token_record)
+    db.add(refresh_token_record)
+    db.commit()
+
+    return user, new_access_token, new_refresh_token

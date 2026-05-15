@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
-from app.auth.service import login_user, register_user
+from app.auth.service import login_user, refresh_user_tokens, register_user
 from app.config import settings
 from app.database import get_db
 from app.schemas.auth import AuthResponse, LoginRequest, RegisterRequest
 from app.auth.dependencies import get_current_user
 from app.models.user import User
+from fastapi import APIRouter, Cookie, Depends, Response, status
 
 
 router = APIRouter(
@@ -73,4 +74,42 @@ def whoami(current_user: User = Depends(get_current_user)):
     return {
         "message": "User is authenticated",
         "user": current_user,
+    }
+
+@router.post(
+    "/refresh",
+    response_model=AuthResponse,
+    status_code=status.HTTP_200_OK,
+)
+def refresh(
+    response: Response,
+    refresh_token: str | None = Cookie(default=None),
+    db: Session = Depends(get_db),
+):
+    user, new_access_token, new_refresh_token = refresh_user_tokens(
+        db=db,
+        refresh_token=refresh_token,
+    )
+
+    response.set_cookie(
+        key="access_token",
+        value=new_access_token,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        max_age=settings.JWT_ACCESS_EXPIRE_MINUTES * 60,
+    )
+
+    response.set_cookie(
+        key="refresh_token",
+        value=new_refresh_token,
+        httponly=True,
+        secure=False,
+        samesite="lax",
+        max_age=settings.JWT_REFRESH_EXPIRE_DAYS * 24 * 60 * 60,
+    )
+
+    return {
+        "message": "Tokens refreshed successfully",
+        "user": user,
     }
