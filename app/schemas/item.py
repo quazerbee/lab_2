@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 from typing import Optional
+from typing import List
 
 class ItemCreate(BaseModel):
     name: str
@@ -16,3 +17,12 @@ class ItemResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class PaginationMeta(BaseModel):
+    total: int
+    limit: int
+    offset: int
+
+class PaginatedItems(BaseModel):
+    data: List[ItemResponse]
+    meta: PaginationMeta

@@ -2,8 +2,8 @@ from fastapi import FastAPI
 from app.database import engine, Base
 from app.models.item import Item
 from app.routers.item_router import router as item_router
-from app.database import Base
-from app.models.item import Item
+from fastapi import Request
+from fastapi.responses import JSONResponse
 
 
 app = FastAPI()
@@ -21,3 +21,10 @@ def check_db():
         return {"message": "DB connected!"}
     except:
         return {"message": "DB connection failed"}
+    
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"}
+    )

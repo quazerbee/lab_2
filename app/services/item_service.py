@@ -2,7 +2,16 @@ from sqlalchemy.orm import Session
 from app.models.item import Item
 from datetime import datetime
 
+
 def create_item(db: Session, name: str, description: str):
+    existing = db.query(Item).filter(
+        Item.name == name,
+        Item.deleted_at == None
+    ).first()
+
+    if existing:
+        return None  # сигнал конфликта
+
     item = Item(name=name, description=description)
     db.add(item)
     db.commit()
@@ -10,21 +19,26 @@ def create_item(db: Session, name: str, description: str):
     return item
 
 def get_items(db: Session, limit: int = 10, offset: int = 0):
-    return db.query(Item)\
-        .filter(Item.deleted_at == None)\
-        .offset(offset)\
-        .limit(limit)\
-        .all()
+    query = db.query(Item).filter(Item.deleted_at == None)
+
+    total = query.count()  # общее количество
+
+    items = query.offset(offset).limit(limit).all()
+
+    return items, total
 
 def delete_item(db: Session, item_id: int):
-    item = db.query(Item).filter(Item.id == item_id).first()
-    
+    item = db.query(Item).filter(
+        Item.id == item_id,
+        Item.deleted_at == None
+    ).first()
+
     if not item:
         return None
 
-    item.deleted_at = datetime.utcnow()  # 🔥 мягкое удаление
+    item.deleted_at = datetime.utcnow()
     db.commit()
-    
+
     return item
 
 def get_item_by_id(db: Session, item_id: int):
@@ -35,7 +49,10 @@ def get_item_by_id(db: Session, item_id: int):
 
 
 def update_item(db: Session, item_id: int, name: str, description: str):
-    item = db.query(Item).filter(Item.id == item_id).first()
+    item = db.query(Item).filter(
+        Item.id == item_id,
+        Item.deleted_at == None
+    ).first()
 
     if not item:
         return None
@@ -51,7 +68,10 @@ def update_item(db: Session, item_id: int, name: str, description: str):
 
 
 def patch_item(db: Session, item_id: int, name: str = None, description: str = None):
-    item = db.query(Item).filter(Item.id == item_id).first()
+    item = db.query(Item).filter(
+        Item.id == item_id,
+        Item.deleted_at == None
+    ).first()
 
     if not item:
         return None

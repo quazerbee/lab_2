@@ -37,15 +37,32 @@
 
 ### Запуск через Docker (основной способ)
 
-#### 1. Создать файл `.env`
+#### 1. Настроить `.env`
+
+Создайте файл `.env` на основе `.env.example`:
+
+```bash
+cp .env.example .env
+```
+
+Заполните значения переменных окружения:
 
 ```env
 DB_USER=student
-DB_PASSWORD=student
+DB_PASSWORD=your_password
 DB_NAME=lab_db
-DB_HOST=postgres
+DB_HOST=localhost
 DB_PORT=5432
 ```
+
+Для запуска через Docker используйте:
+
+```env
+DB_HOST=postgres
+```
+
+Примечание:
+Файл `.env` не хранится в репозитории и используется только для локальной конфигурации.
 
 #### 2. Запустить контейнеры
 

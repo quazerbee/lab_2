@@ -14,5 +14,19 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  app:
+    build: .
+    container_name: lab_app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: student
+      DB_PASSWORD: student
+      DB_NAME: lab_db
+
 volumes:
   postgres_data:
