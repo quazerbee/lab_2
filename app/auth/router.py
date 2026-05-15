@@ -5,6 +5,8 @@ from app.auth.service import login_user, register_user
 from app.config import settings
 from app.database import get_db
 from app.schemas.auth import AuthResponse, LoginRequest, RegisterRequest
+from app.auth.dependencies import get_current_user
+from app.models.user import User
 
 
 router = APIRouter(
@@ -60,4 +62,15 @@ def login(
     return {
         "message": "User logged in successfully",
         "user": user,
+    }
+
+@router.get(
+    "/whoami",
+    response_model=AuthResponse,
+    status_code=status.HTTP_200_OK,
+)
+def whoami(current_user: User = Depends(get_current_user)):
+    return {
+        "message": "User is authenticated",
+        "user": current_user,
     }
