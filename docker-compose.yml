@@ -31,10 +31,10 @@ services:
       JWT_REFRESH_SECRET: change_me_refresh_secret
       JWT_ACCESS_EXPIRE_MINUTES: 15
       JWT_REFRESH_EXPIRE_DAYS: 7
-      YANDEX_CLIENT_ID: your_yandex_client_id
-      YANDEX_CLIENT_SECRET: your_yandex_client_secret
-      YANDEX_CALLBACK_URL: http://localhost:8000/auth/oauth/yandex/callback
-      CLIENT_URL: http://localhost:3000
+      YANDEX_CLIENT_ID: ${YANDEX_CLIENT_ID}
+      YANDEX_CLIENT_SECRET: ${YANDEX_CLIENT_SECRET}
+      YANDEX_CALLBACK_URL: ${YANDEX_CALLBACK_URL}
+      CLIENT_URL: ${CLIENT_URL}
 
 volumes:
   postgres_data:
