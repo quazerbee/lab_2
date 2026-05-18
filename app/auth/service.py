@@ -189,3 +189,31 @@ def refresh_user_tokens(db: Session, refresh_token: str | None) -> tuple[User, s
     db.commit()
 
     return user, new_access_token, new_refresh_token
+
+def logout_current_session(
+    db: Session,
+    access_token: str | None,
+    refresh_token: str | None,
+) -> None:
+    if access_token:
+        db.query(AuthToken).filter(
+            AuthToken.token_hash == hash_token(access_token),
+            AuthToken.revoked.is_(False),
+        ).update({"revoked": True})
+
+    if refresh_token:
+        db.query(AuthToken).filter(
+            AuthToken.token_hash == hash_token(refresh_token),
+            AuthToken.revoked.is_(False),
+        ).update({"revoked": True})
+
+    db.commit()
+
+
+def logout_all_sessions(db: Session, user: User) -> None:
+    db.query(AuthToken).filter(
+        AuthToken.user_id == user.id,
+        AuthToken.revoked.is_(False),
+    ).update({"revoked": True})
+
+    db.commit()

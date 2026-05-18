@@ -1,13 +1,23 @@
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Cookie, Depends, Response, status
 from sqlalchemy.orm import Session
 
-from app.auth.service import login_user, refresh_user_tokens, register_user
+from app.auth.dependencies import get_current_user
+from app.auth.service import (
+    login_user,
+    logout_all_sessions,
+    logout_current_session,
+    refresh_user_tokens,
+    register_user,
+)
 from app.config import settings
 from app.database import get_db
-from app.schemas.auth import AuthResponse, LoginRequest, RegisterRequest
-from app.auth.dependencies import get_current_user
 from app.models.user import User
-from fastapi import APIRouter, Cookie, Depends, Response, status
+from app.schemas.auth import (
+    AuthResponse,
+    LoginRequest,
+    MessageResponse,
+    RegisterRequest,
+)
 
 
 router = APIRouter(
@@ -65,6 +75,7 @@ def login(
         "user": user,
     }
 
+
 @router.get(
     "/whoami",
     response_model=AuthResponse,
@@ -75,6 +86,7 @@ def whoami(current_user: User = Depends(get_current_user)):
         "message": "User is authenticated",
         "user": current_user,
     }
+
 
 @router.post(
     "/refresh",
@@ -112,4 +124,49 @@ def refresh(
     return {
         "message": "Tokens refreshed successfully",
         "user": user,
+    }
+
+
+@router.post(
+    "/logout",
+    response_model=MessageResponse,
+    status_code=status.HTTP_200_OK,
+)
+def logout(
+    response: Response,
+    access_token: str | None = Cookie(default=None),
+    refresh_token: str | None = Cookie(default=None),
+    db: Session = Depends(get_db),
+):
+    logout_current_session(
+        db=db,
+        access_token=access_token,
+        refresh_token=refresh_token,
+    )
+
+    response.delete_cookie(key="access_token")
+    response.delete_cookie(key="refresh_token")
+
+    return {
+        "message": "Logged out successfully",
+    }
+
+
+@router.post(
+    "/logout-all",
+    response_model=MessageResponse,
+    status_code=status.HTTP_200_OK,
+)
+def logout_all(
+    response: Response,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    logout_all_sessions(db=db, user=current_user)
+
+    response.delete_cookie(key="access_token")
+    response.delete_cookie(key="refresh_token")
+
+    return {
+        "message": "Logged out from all sessions successfully",
     }
