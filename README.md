@@ -1,90 +1,152 @@
-# FastAPI Auth Project — Lab 3
+# Лабораторная работа №3  
+## Авторизация и аутентификация: JWT, OAuth2, Cookies
 
-## Описание
+Проект является продолжением **Лабораторной работы №2**.  
+К CRUD API на FastAPI добавлена система аутентификации, авторизации, JWT-сессий, OAuth-входа через Yandex ID и защиты пользовательских ресурсов.
 
-Проект представляет собой REST API на FastAPI с использованием PostgreSQL, SQLAlchemy, Alembic и Docker.
+---
 
-Лабораторная работа №3 является продолжением Лабораторной работы №2.  
-К CRUD-функционалу добавлена система аутентификации и авторизации:
+## Содержание
+
+- [Описание проекта](#описание-проекта)
+- [Стек технологий](#стек-технологий)
+- [Что реализовано](#что-реализовано)
+- [Структура проекта](#структура-проекта)
+- [Переменные окружения](#переменные-окружения)
+- [Запуск через Docker](#запуск-через-docker)
+- [Миграции базы данных](#миграции-базы-данных)
+- [API эндпоинты](#api-эндпоинты)
+- [Проверка через Swagger](#проверка-через-swagger)
+- [Yandex OAuth](#yandex-oauth)
+- [Безопасность](#безопасность)
+- [Проверка данных в БД](#проверка-данных-в-бд)
+- [Автор](#автор)
+
+---
+
+## Описание проекта
+
+REST API реализовано на **FastAPI** с использованием **PostgreSQL**, **SQLAlchemy**, **Alembic** и **Docker**.
+
+В рамках лабораторной работы реализованы:
 
 - регистрация пользователей;
 - вход по email и паролю;
-- хранение паролей в виде хеша с уникальной солью;
-- выдача Access и Refresh JWT;
+- хеширование паролей с уникальной солью;
+- Access Token и Refresh Token;
 - передача токенов через `HttpOnly` cookies;
 - хранение хешей токенов в базе данных;
-- обновление токенов через refresh token;
+- обновление токенов через `/auth/refresh`;
 - выход из текущей сессии;
 - выход из всех сессий;
-- проверка текущего пользователя через `/auth/whoami`;
+- эндпоинт `/auth/whoami`;
+- OAuth-вход через **Yandex ID**;
 - восстановление пароля через reset token;
-- OAuth-вход через Yandex ID;
-- защита CRUD-ресурсов авторизацией;
+- защита CRUD-ресурсов из лабораторной №2;
 - проверка владения ресурсом через `owner_id`.
 
 ---
 
-## Технологии
+## Стек технологий
 
-- Python 3.11
-- FastAPI
-- PostgreSQL 16
-- SQLAlchemy
-- Alembic
-- Pydantic
-- Uvicorn
-- Docker / Docker Compose
-- JWT (`python-jose`)
-- bcrypt / passlib
-- httpx
-- Yandex ID OAuth
+| Технология | Назначение |
+| --- | --- |
+| Python 3.11 | Язык программирования |
+| FastAPI | Web API framework |
+| PostgreSQL 16 | База данных |
+| SQLAlchemy | ORM |
+| Alembic | Миграции БД |
+| Pydantic | DTO и валидация |
+| Uvicorn | ASGI-сервер |
+| Docker / Docker Compose | Контейнеризация |
+| python-jose | Работа с JWT |
+| passlib / bcrypt | Хеширование паролей |
+| httpx | HTTP-запросы к OAuth-провайдеру |
+| Yandex ID | OAuth 2.0 провайдер |
 
 ---
 
-## Архитектура проекта
+## Что реализовано
 
-Проект построен по модульной структуре:
+### Auth
+
+| Функция | Статус |
+| --- | --- |
+| Регистрация пользователя | ✅ |
+| Логин по email и паролю | ✅ |
+| JWT Access Token | ✅ |
+| JWT Refresh Token | ✅ |
+| `HttpOnly` cookies | ✅ |
+| Хранение хешей токенов в БД | ✅ |
+| Refresh token flow | ✅ |
+| Logout текущей сессии | ✅ |
+| Logout всех сессий | ✅ |
+| `/auth/whoami` | ✅ |
+| OAuth через Yandex ID | ✅ |
+| Forgot password | ✅ |
+| Reset password | ✅ |
+
+### CRUD из лабораторной №2
+
+| Функция | Статус |
+| --- | --- |
+| Создание ресурса | ✅ |
+| Получение списка с пагинацией | ✅ |
+| Получение по ID | ✅ |
+| PUT обновление | ✅ |
+| PATCH обновление | ✅ |
+| Soft Delete | ✅ |
+| Защита авторизацией | ✅ |
+| Проверка владельца ресурса | ✅ |
+
+---
+
+## Структура проекта
 
 ```text
 app/
-├── auth/          # логика аутентификации, JWT, OAuth, зависимости
-├── models/        # SQLAlchemy ORM-модели
-├── routers/       # API-роутеры
-├── schemas/       # DTO / Pydantic-схемы
-├── services/      # бизнес-логика
-├── config.py      # настройки приложения
-├── database.py    # подключение к БД
-└── main.py        # точка входа FastAPI
+├── auth/
+│   ├── dependencies.py      # получение текущего пользователя
+│   ├── oauth_yandex.py      # ручная реализация Yandex OAuth
+│   ├── router.py            # auth endpoints
+│   ├── security.py          # JWT, hash password, hash token
+│   └── service.py           # auth business logic
+│
+├── models/
+│   ├── auth_token.py
+│   ├── item.py
+│   ├── password_reset_token.py
+│   └── user.py
+│
+├── routers/
+│   └── item_router.py
+│
+├── schemas/
+│   ├── auth.py
+│   ├── item.py
+│   └── user.py
+│
+├── services/
+│   └── item_service.py
+│
+├── config.py
+├── database.py
+└── main.py
+```
 
-| Метод | Endpoint                      | Описание                          | Доступ                       |
-| ----- | ----------------------------- | --------------------------------- | ---------------------------- |
-| POST  | `/auth/register`              | Регистрация пользователя          | Public                       |
-| POST  | `/auth/login`                 | Вход и установка cookies          | Public                       |
-| POST  | `/auth/refresh`               | Обновление access/refresh токенов | Public, нужен refresh cookie |
-| GET   | `/auth/whoami`                | Получение текущего пользователя   | Private                      |
-| POST  | `/auth/logout`                | Выход из текущей сессии           | Private                      |
-| POST  | `/auth/logout-all`            | Выход из всех сессий              | Private                      |
-| GET   | `/auth/oauth/yandex`          | Старт OAuth через Yandex ID       | Public                       |
-| GET   | `/auth/oauth/yandex/callback` | Callback от Yandex ID             | Public                       |
-| POST  | `/auth/forgot-password`       | Генерация reset token             | Public                       |
-| POST  | `/auth/reset-password`        | Смена пароля по reset token       | Public                       |
+---
 
+## Переменные окружения
 
-| Метод  | Endpoint      | Описание                         | Доступ  |
-| ------ | ------------- | -------------------------------- | ------- |
-| POST   | `/items`      | Создать item                     | Private |
-| GET    | `/items`      | Получить список своих items      | Private |
-| GET    | `/items/{id}` | Получить свой item по ID         | Private |
-| PUT    | `/items/{id}` | Полное обновление своего item    | Private |
-| PATCH  | `/items/{id}` | Частичное обновление своего item | Private |
-| DELETE | `/items/{id}` | Soft Delete своего item          | Private |
+Создайте файл `.env` на основе `.env.example`.
 
-Переменные окружения
-
-Создайте файл .env на основе .env.example:
-
+```bash
 cp .env.example .env
+```
 
+Пример `.env.example`:
+
+```env
 DB_USER=student
 DB_PASSWORD=student
 DB_NAME=lab_db
@@ -100,358 +162,575 @@ YANDEX_CLIENT_ID=your_yandex_client_id
 YANDEX_CLIENT_SECRET=your_yandex_client_secret
 YANDEX_CALLBACK_URL=http://localhost:8000/auth/oauth/yandex/callback
 CLIENT_URL=http://localhost:8000/docs
+```
 
-Файл .env не хранится в репозитории и не должен попадать на GitHub.
+> Файл `.env` не должен попадать в GitHub.
 
-Запуск через Docker
-1. Создать .env
-cp .env.example .env
-Заполните переменные окружения.
-Для локального запуска через Docker значение должно быть: DB_HOST=postgres
+---
 
-2. Запустить контейнеры
-docker compose up -d --build
+## Запуск через Docker
 
-3. Применить миграции
-docker exec -it lab_app python -m alembic upgrade head
+### 1. Клонировать репозиторий
 
-4. Открыть Swagger
-http://localhost:8000/docs
-
-Локальный запуск без Docker
-1. Клонировать проект
-git clone <your-repo-url>
+```bash
+git clone https://github.com/quazerbee/lab_2.git
 cd lab_2
+git checkout lab3-auth
+```
 
-2. Создать виртуальное окружение
+### 2. Создать `.env`
+
+```bash
+cp .env.example .env
+```
+
+Для запуска через Docker должно быть:
+
+```env
+DB_HOST=postgres
+```
+
+### 3. Запустить контейнеры
+
+```bash
+docker compose up -d --build
+```
+
+### 4. Применить миграции
+
+```bash
+docker exec -it lab_app python -m alembic upgrade head
+```
+
+### 5. Открыть Swagger
+
+```text
+http://localhost:8000/docs
+```
+
+---
+
+## Локальный запуск без Docker
+
+### 1. Создать виртуальное окружение
+
+```bash
 python -m venv venv
+```
 
-Для Windows PowerShell: .\venv\Scripts\Activate.ps1
+Windows PowerShell:
 
-3. Установить зависимости
+```powershell
+.\venv\Scripts\Activate.ps1
+```
+
+### 2. Установить зависимости
+
+```bash
 pip install -r requirements.txt
+```
 
-4. Настроить .env
+### 3. Настроить `.env`
 
-Для локального запуска без Docker: DB_HOST=localhost
+Для локального запуска без Docker:
 
-5. Применить миграции
+```env
+DB_HOST=localhost
+```
+
+### 4. Применить миграции
+
+```bash
 python -m alembic upgrade head
+```
 
-6. Запустить сервер
+### 5. Запустить сервер
+
+```bash
 uvicorn app.main:app --reload
+```
 
-Swagger: http://localhost:8000/docs
+Swagger:
 
-Yandex OAuth
+```text
+http://localhost:8000/docs
+```
 
-Для проверки OAuth-входа необходимо создать приложение в Yandex OAuth.
+---
 
-Тип приложения:
+## Миграции базы данных
 
-Для авторизации пользователей
+Миграции выполняются через Alembic.
 
-Платформа: Веб-сервисы
+Применить миграции:
 
-Redirect URI: http://localhost:8000/auth/oauth/yandex/callback
+```bash
+docker exec -it lab_app python -m alembic upgrade head
+```
 
-Необходимые права:
+Создать новую миграцию:
 
-Доступ к адресу электронной почты
-Доступ к логину, имени и фамилии, полу
+```bash
+docker exec -it lab_app python -m alembic revision --autogenerate -m "migration name"
+```
 
-После создания приложения нужно указать в .env:
+Основные таблицы:
 
-YANDEX_CLIENT_ID=your_yandex_client_id
-YANDEX_CLIENT_SECRET=your_yandex_client_secret
-YANDEX_CALLBACK_URL=http://localhost:8000/auth/oauth/yandex/callback
-CLIENT_URL=http://localhost:8000/docs
+| Таблица | Назначение |
+| --- | --- |
+| `users` | Пользователи |
+| `auth_tokens` | Хеши access/refresh токенов |
+| `items` | CRUD-ресурсы |
+| `password_reset_tokens` | Хеши reset-токенов |
 
-Проверка OAuth:
+---
 
-Запустить приложение.
-Открыть в браузере: http://localhost:8000/auth/oauth/yandex
-Подтвердить вход через Яндекс.
-После редиректа обратно в Swagger вызвать: GET /auth/whoami
+## API эндпоинты
 
-Если OAuth прошёл успешно, вернётся профиль пользователя.
+### Auth endpoints
 
-Примеры запросов
-Регистрация
+| Метод | URI | Описание | Доступ |
+| --- | --- | --- | --- |
+| POST | `/auth/register` | Регистрация | Public |
+| POST | `/auth/login` | Логин и установка cookies | Public |
+| POST | `/auth/refresh` | Обновление токенов | Public, нужен refresh cookie |
+| GET | `/auth/whoami` | Получение текущего пользователя | Private |
+| POST | `/auth/logout` | Выход из текущей сессии | Private |
+| POST | `/auth/logout-all` | Выход из всех сессий | Private |
+| GET | `/auth/oauth/yandex` | Старт OAuth через Yandex ID | Public |
+| GET | `/auth/oauth/yandex/callback` | Callback от Yandex ID | Public |
+| POST | `/auth/forgot-password` | Генерация reset token | Public |
+| POST | `/auth/reset-password` | Смена пароля | Public |
+
+### Items endpoints
+
+Все `/items` endpoints требуют авторизацию.
+
+| Метод | URI | Описание |
+| --- | --- | --- |
+| POST | `/items` | Создать item |
+| GET | `/items` | Получить список своих items |
+| GET | `/items/{item_id}` | Получить свой item по ID |
+| PUT | `/items/{item_id}` | Полное обновление |
+| PATCH | `/items/{item_id}` | Частичное обновление |
+| DELETE | `/items/{item_id}` | Soft Delete |
+
+---
+
+## Проверка через Swagger
+
+Swagger доступен по адресу:
+
+```text
+http://localhost:8000/docs
+```
+
+### 1. Регистрация
+
+```json
 POST /auth/register
 
 {
   "email": "test@example.com",
   "password": "Password123"
 }
+```
 
-Успешный ответ:
+Ожидаемый результат:
 
-{
-  "message": "User registered successfully",
-  "user": {
-    "id": 1,
-    "email": "test@example.com",
-    "created_at": "...",
-    "updated_at": "...",
-    "deleted_at": null
-  }
-}
+```text
+201 Created
+```
 
-Логин
+Повторная регистрация с тем же email:
+
+```text
+409 Conflict
+```
+
+---
+
+### 2. Логин
+
+```json
 POST /auth/login
 
 {
   "email": "test@example.com",
   "password": "Password123"
 }
+```
+
+Ожидаемый результат:
+
+```text
+200 OK
+```
 
 После успешного входа сервер устанавливает cookies:
 
+```text
 access_token
 refresh_token
+```
 
-Обе cookies имеют флаг: HttpOnly
+---
 
-Проверка текущего пользователя
+### 3. Whoami
+
+```text
 GET /auth/whoami
+```
 
 Если пользователь авторизован:
 
-{
-  "message": "User is authenticated",
-  "user": {
-    "id": 1,
-    "email": "test@example.com",
-    "created_at": "...",
-    "updated_at": "...",
-    "deleted_at": null
-  }
-}
+```text
+200 OK
+```
 
-Если пользователь не авторизован:
+Если cookies отсутствуют:
 
-{
-  "detail": "Not authenticated"
-}
+```text
+401 Unauthorized
+```
 
-Обновление токенов
-POST /auth/refresh Использует refresh_token из cookies.
+---
 
-Logout
-POST /auth/logout Завершает текущую сессию и удаляет cookies.
+### 4. Refresh
 
-Logout All
-POST /auth/logout-all Отзывает все активные токены пользователя.
+```text
+POST /auth/refresh
+```
 
-Forgot Password
+Использует `refresh_token` из cookies и выдаёт новую пару токенов.
+
+---
+
+### 5. Logout
+
+```text
+POST /auth/logout
+```
+
+Завершает текущую сессию.
+
+После logout:
+
+```text
+GET /auth/whoami → 401 Unauthorized
+```
+
+---
+
+### 6. Logout All
+
+```text
+POST /auth/logout-all
+```
+
+Отзывает все активные токены пользователя.
+
+---
+
+### 7. Password reset
+
+Запрос reset token:
+
+```json
 POST /auth/forgot-password
 
 {
   "email": "test@example.com"
 }
+```
 
 Ответ:
 
+```json
 {
   "message": "Password reset token generated successfully",
   "reset_token": "..."
 }
+```
 
-В учебной реализации reset token возвращается в ответе для удобства тестирования.
-В production-приложении такой токен должен отправляться пользователю по email.
+Смена пароля:
 
-Reset Password
+```json
 POST /auth/reset-password
 
 {
   "token": "reset_token_here",
   "new_password": "NewPassword123"
 }
+```
 
-После смены пароля старые auth-токены пользователя отзываются.
+После смены пароля:
 
-Создание item
-Требуется авторизация.
+```text
+старый пароль → 401
+новый пароль → 200
+повторное использование reset token → 401
+```
 
+> В учебной реализации reset token возвращается в ответе.  
+> В production-приложении он должен отправляться пользователю по email.
+
+---
+
+### 8. Проверка защищённых items
+
+Без логина:
+
+```text
+GET /items → 401 Unauthorized
+```
+
+После логина:
+
+```json
 POST /items
 
 {
   "name": "My private item",
   "description": "Created by authenticated user"
 }
+```
 
-Ответ:
+Ожидаемый ответ:
 
+```json
 {
   "id": 1,
   "owner_id": 1,
   "name": "My private item",
   "description": "Created by authenticated user"
 }
+```
 
-Получение items
+Проверка списка:
+
+```text
 GET /items?limit=10&offset=0
+```
 
-Ответ:
+После удаления:
 
-{
-  "data": [
-    {
-      "id": 1,
-      "owner_id": 1,
-      "name": "My private item",
-      "description": "Created by authenticated user"
-    }
-  ],
-  "meta": {
-    "total": 1,
-    "limit": 10,
-    "offset": 0
-  }
-}
+```text
+DELETE /items/{item_id} → 204 No Content
+GET /items/{item_id} → 404 Not Found
+```
 
-Безопасность
+---
 
-В проекте реализованы следующие механизмы безопасности:
+## Yandex OAuth
 
-пароли не хранятся в открытом виде;
-для каждого пароля используется уникальная соль;
-пароли хешируются;
-Access и Refresh токены передаются через HttpOnly cookies;
-токены в базе данных хранятся только в виде хешей;
-Refresh Token хранится на сервере и может быть отозван;
-реализован logout текущей сессии;
-реализован logout всех сессий;
-OAuth state используется для защиты от CSRF;
-чувствительные данные не возвращаются в API-ответах;
-.env исключён из Git;
-CRUD-ресурсы защищены авторизацией;
-реализована проверка владения ресурсом через owner_id.
+Для проверки OAuth нужно создать приложение в Yandex OAuth.
 
-Модели базы данных
+### Настройки приложения
 
-Основные таблицы:
+Тип приложения:
 
-users
-auth_tokens
-items
-password_reset_tokens
-users
+```text
+Для авторизации пользователей
+```
 
-Содержит данные пользователей:
+Платформа:
 
-id
-email
-password_hash
-password_salt
-yandex_id
-vk_id
-created_at
-updated_at
-deleted_at
-auth_tokens
+```text
+Веб-сервисы
+```
 
-Содержит хеши access/refresh токенов:
+Redirect URI:
 
-id
-user_id
-token_hash
-token_type
-expires_at
-revoked
-created_at
-items
+```text
+http://localhost:8000/auth/oauth/yandex/callback
+```
 
-Содержит CRUD-ресурсы:
+Рекомендуемые права:
 
-id
-owner_id
-name
-description
-created_at
-updated_at
-deleted_at
-password_reset_tokens
+```text
+Доступ к адресу электронной почты
+Доступ к логину, имени и фамилии, полу
+```
 
-Содержит хеши reset-токенов:
+После создания приложения нужно указать в `.env`:
 
-id
-user_id
-token_hash
-expires_at
-used
-created_at
-Миграции
+```env
+YANDEX_CLIENT_ID=your_yandex_client_id
+YANDEX_CLIENT_SECRET=your_yandex_client_secret
+YANDEX_CALLBACK_URL=http://localhost:8000/auth/oauth/yandex/callback
+CLIENT_URL=http://localhost:8000/docs
+```
 
-Миграции выполняются через Alembic.
+### Проверка OAuth
 
-Применить миграции внутри Docker:
+Откройте в браузере:
 
-docker exec -it lab_app python -m alembic upgrade head
+```text
+http://localhost:8000/auth/oauth/yandex
+```
 
-Создать новую миграцию:
+Далее:
 
-docker exec -it lab_app python -m alembic revision --autogenerate -m "migration name"
-Проверка работы
+1. Происходит редирект на Яндекс.
+2. Пользователь подтверждает вход.
+3. Яндекс возвращает пользователя на callback.
+4. Backend создаёт или находит локального пользователя.
+5. Backend устанавливает `HttpOnly` cookies.
+6. Пользователь возвращается на Swagger.
+7. Проверка:
 
-Основные сценарии для проверки:
+```text
+GET /auth/whoami
+```
 
-Регистрация пользователя.
-Повторная регистрация с тем же email должна вернуть 409 Conflict.
-Логин с правильным паролем должен вернуть 200 OK.
-Логин с неправильным паролем должен вернуть 401 Unauthorized.
-После логина /auth/whoami должен вернуть пользователя.
-Без cookies /auth/whoami должен вернуть 401 Unauthorized.
-/auth/refresh должен обновлять пару токенов.
-/auth/logout должен завершать текущую сессию.
-/auth/logout-all должен завершать все сессии.
-/items без авторизации должен вернуть 401 Unauthorized.
-/items после логина должен работать.
-Пользователь должен видеть только свои items.
-Soft Delete должен скрывать удалённые items.
-Yandex OAuth должен создавать/находить пользователя и авторизовывать его.
-Forgot/reset password должен менять пароль.
-Повторное использование reset token должно вернуть 401 Unauthorized.
+Ожидаемый результат:
 
-Проверка одинаковых паролей
+```text
+200 OK
+```
 
-Для проверки уникальной соли можно зарегистрировать двух пользователей с одинаковым паролем:
+---
 
+## Безопасность
+
+В проекте реализованы следующие меры:
+
+| Механизм | Реализация |
+| --- | --- |
+| Хранение паролей | Только хеш + соль |
+| Уникальная соль | Генерируется для каждого пользователя |
+| Access Token | JWT, короткий срок жизни |
+| Refresh Token | JWT, длительный срок жизни |
+| Передача токенов | Только через `HttpOnly` cookies |
+| Хранение токенов | В БД хранится только хеш токена |
+| Logout | Токен помечается как `revoked=True` |
+| Logout all | Отзываются все токены пользователя |
+| OAuth CSRF protection | Используется параметр `state` |
+| Reset password | Reset token хранится в БД в виде хеша |
+| Items ownership | Проверка `owner_id` |
+
+---
+
+## Проверка данных в БД
+
+### Проверка пользователей
+
+```sql
+SELECT id, email, password_hash, password_salt, yandex_id, created_at
+FROM users
+ORDER BY id ASC;
+```
+
+Пароли не должны храниться в открытом виде.
+
+---
+
+### Проверка одинаковых паролей
+
+Зарегистрируйте двух пользователей с одинаковым паролем:
+
+```json
 {
   "email": "user1@example.com",
   "password": "Password123"
 }
+```
+
+```json
 {
   "email": "user2@example.com",
   "password": "Password123"
 }
+```
 
-После этого в базе данных значения password_hash должны отличаться.
+Проверка:
 
-Пример SQL-запроса:
-
+```sql
 SELECT id, email, password_hash, password_salt
 FROM users
 ORDER BY id ASC;
-Проверка токенов в БД
+```
 
-Токены в базе данных хранятся в виде хешей:
+`password_hash` и `password_salt` должны отличаться.
 
+---
+
+### Проверка токенов
+
+```sql
 SELECT id, user_id, token_type, token_hash, expires_at, revoked
 FROM auth_tokens
 ORDER BY id DESC;
+```
 
-Исходные значения JWT в базе данных не хранятся.
+В БД не должно быть исходных JWT, только их хеши.
 
-Обработка ошибок
-400 Bad Request — неверные параметры запроса.
-401 Unauthorized — пользователь не авторизован, токен отсутствует или невалиден.
-403 Forbidden — недостаточно прав для доступа к ресурсу.
-404 Not Found — ресурс не найден.
-409 Conflict — конфликт данных, например повторный email.
-500 Internal Server Error — внутренняя ошибка сервера.
-Автор
+---
 
-Путинцев С.Р
+### Проверка reset token
+
+```sql
+SELECT id, user_id, token_hash, expires_at, used
+FROM password_reset_tokens
+ORDER BY id DESC;
+```
+
+Reset token также хранится в виде хеша.
+
+---
+
+### Проверка Soft Delete
+
+```sql
+SELECT id, owner_id, name, description, deleted_at
+FROM items
+ORDER BY id ASC;
+```
+
+Удалённые записи остаются в базе, но имеют заполненное поле `deleted_at`.
+
+---
+
+## Обработка ошибок
+
+| Код | Значение |
+| --- | --- |
+| 400 | Неверные параметры запроса |
+| 401 | Не авторизован |
+| 403 | Недостаточно прав |
+| 404 | Ресурс не найден |
+| 409 | Конфликт данных |
+| 422 | Ошибка валидации |
+| 500 | Внутренняя ошибка сервера |
+
+---
+
+## Финальная проверка перед сдачей
+
+Перед сдачей проекта проверьте:
+
+- [ ] `docker compose up -d --build` запускает проект.
+- [ ] `alembic upgrade head` применяет миграции.
+- [ ] Swagger открывается.
+- [ ] Регистрация работает.
+- [ ] Логин работает.
+- [ ] Cookies устанавливаются как `HttpOnly`.
+- [ ] `/auth/whoami` работает после логина.
+- [ ] `/auth/refresh` обновляет токены.
+- [ ] `/auth/logout` завершает текущую сессию.
+- [ ] `/auth/logout-all` завершает все сессии.
+- [ ] Yandex OAuth работает.
+- [ ] `/items` защищены авторизацией.
+- [ ] Пользователь видит только свои items.
+- [ ] Soft Delete работает.
+- [ ] Forgot/reset password работает.
+- [ ] `.env` не попал в Git.
+- [ ] В `docker-compose.yml` нет настоящих секретов.
+
+---
+
+## Автор
+
+Путинцев С.Р.  
 090304-РПИб-о23
