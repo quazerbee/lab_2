@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
-
+from uuid import uuid4
+from app.models.password_reset_token import PasswordResetToken
 from fastapi import HTTPException, status
 from jose import JWTError
 from sqlalchemy.orm import Session
@@ -211,6 +212,78 @@ def logout_current_session(
 
 
 def logout_all_sessions(db: Session, user: User) -> None:
+    db.query(AuthToken).filter(
+        AuthToken.user_id == user.id,
+        AuthToken.revoked.is_(False),
+    ).update({"revoked": True})
+
+    db.commit()
+
+def forgot_password(db: Session, email: str) -> str:
+    user = (
+        db.query(User)
+        .filter(User.email == email)
+        .filter(User.deleted_at.is_(None))
+        .first()
+    )
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User with this email not found",
+        )
+
+    reset_token = uuid4().hex
+
+    token_record = PasswordResetToken(
+        user_id=user.id,
+        token_hash=hash_token(reset_token),
+        expires_at=datetime.utcnow() + timedelta(minutes=30),
+        used=False,
+    )
+
+    db.add(token_record)
+    db.commit()
+
+    return reset_token
+
+
+def reset_password(db: Session, token: str, new_password: str) -> None:
+    token_record = (
+        db.query(PasswordResetToken)
+        .filter(PasswordResetToken.token_hash == hash_token(token))
+        .filter(PasswordResetToken.used.is_(False))
+        .filter(PasswordResetToken.expires_at > datetime.utcnow())
+        .first()
+    )
+
+    if not token_record:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired password reset token",
+        )
+
+    user = (
+        db.query(User)
+        .filter(User.id == token_record.user_id)
+        .filter(User.deleted_at.is_(None))
+        .first()
+    )
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    salt = generate_salt()
+    password_hash = hash_password(new_password, salt)
+
+    user.password_salt = salt
+    user.password_hash = password_hash
+
+    token_record.used = True
+
     db.query(AuthToken).filter(
         AuthToken.user_id == user.id,
         AuthToken.revoked.is_(False),

@@ -9,6 +9,8 @@ from app.auth.service import (
     logout_current_session,
     refresh_user_tokens,
     register_user,
+    forgot_password,
+    reset_password,
 )
 from app.auth.oauth_yandex import (
     build_yandex_auth_url,
@@ -22,9 +24,12 @@ from app.database import get_db
 from app.models.user import User
 from app.schemas.auth import (
     AuthResponse,
+    ForgotPasswordRequest,
+    ForgotPasswordResponse,
     LoginRequest,
     MessageResponse,
     RegisterRequest,
+    ResetPasswordRequest,
 )
 from app.auth.security import create_access_token, create_refresh_token, hash_token
 from datetime import datetime, timedelta
@@ -277,3 +282,39 @@ async def yandex_oauth_callback(
     )
 
     return response
+
+@router.post(
+    "/forgot-password",
+    response_model=ForgotPasswordResponse,
+    status_code=status.HTTP_200_OK,
+)
+def forgot_password_endpoint(
+    data: ForgotPasswordRequest,
+    db: Session = Depends(get_db),
+):
+    reset_token = forgot_password(db=db, email=data.email)
+
+    return {
+        "message": "Password reset token generated successfully",
+        "reset_token": reset_token,
+    }
+
+
+@router.post(
+    "/reset-password",
+    response_model=MessageResponse,
+    status_code=status.HTTP_200_OK,
+)
+def reset_password_endpoint(
+    data: ResetPasswordRequest,
+    db: Session = Depends(get_db),
+):
+    reset_password(
+        db=db,
+        token=data.token,
+        new_password=data.new_password,
+    )
+
+    return {
+        "message": "Password reset successfully",
+    }

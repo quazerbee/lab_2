@@ -3,7 +3,7 @@ from logging.config import fileConfig
 from sqlalchemy import create_engine
 
 from app.database import Base, DATABASE_URL
-from app.models import item, user, auth_token
+from app.models import item, user, auth_token, password_reset_token
 
 from alembic import context
 
