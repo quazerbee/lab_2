@@ -1,6 +1,7 @@
 import os
 
 from fastapi import FastAPI, Request
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 
 from app.database import engine
@@ -10,6 +11,17 @@ from app.auth.router import router as auth_router
 
 is_production = os.getenv("APP_ENV") == "production"
 
+swagger_oauth_settings = None
+
+if not is_production:
+    swagger_oauth_settings = {
+        "clientId": os.getenv("YANDEX_CLIENT_ID"),
+        "clientSecret": os.getenv("YANDEX_CLIENT_SECRET"),
+        "scopes": "login:email login:info",
+        "usePkceWithAuthorizationCodeGrant": False,
+    }
+
+
 app = FastAPI(
     title="Lab Project API",
     description="Документация API для лабораторных работ №2-№4",
@@ -17,10 +29,59 @@ app = FastAPI(
     docs_url=None if is_production else "/api/docs",
     redoc_url=None if is_production else "/redoc",
     openapi_url=None if is_production else "/openapi.json",
+    swagger_ui_oauth2_redirect_url=None
+    if is_production
+    else "/api/docs/oauth2-redirect",
+    swagger_ui_init_oauth=swagger_oauth_settings,
 )
 
 app.include_router(item_router)
 app.include_router(auth_router)
+
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+
+    security_schemes = openapi_schema.setdefault("components", {}).setdefault(
+        "securitySchemes",
+        {}
+    )
+
+    security_schemes["YandexOAuth2"] = {
+        "type": "oauth2",
+        "description": (
+            "OAuth 2.0 Authorization Code Flow через Yandex ID. "
+            "В Swagger UI данная схема отображает OAuth2-flow провайдера. "
+            "Основной рабочий сценарий приложения начинается через "
+            "GET /auth/oauth/yandex. После callback backend создаёт или находит "
+            "пользователя и устанавливает HttpOnly cookies access_token и refresh_token."
+        ),
+        "flows": {
+            "authorizationCode": {
+                "authorizationUrl": "https://oauth.yandex.ru/authorize",
+                "tokenUrl": "https://oauth.yandex.ru/token",
+                "refreshUrl": "https://oauth.yandex.ru/token",
+                "scopes": {
+                    "login:email": "Доступ к email пользователя",
+                    "login:info": "Доступ к базовой информации профиля пользователя",
+                },
+            }
+        },
+    }
+
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
 
 
 @app.get(

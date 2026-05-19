@@ -1,6 +1,7 @@
 from datetime import datetime
 
-from fastapi import Cookie, Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Security, status
+from fastapi.security import APIKeyCookie
 from jose import JWTError
 from sqlalchemy.orm import Session
 
@@ -10,8 +11,15 @@ from app.models.auth_token import AuthToken
 from app.models.user import User
 
 
+access_token_cookie = APIKeyCookie(
+    name="access_token",
+    auto_error=False,
+    description="JWT access token, который хранится в HttpOnly cookie.",
+)
+
+
 def get_current_user(
-    access_token: str | None = Cookie(default=None),
+    access_token: str | None = Security(access_token_cookie),
     db: Session = Depends(get_db),
 ) -> User:
     if not access_token:
