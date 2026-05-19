@@ -45,6 +45,40 @@ router = APIRouter(
     "/register",
     response_model=AuthResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Зарегистрировать пользователя",
+    description="Создаёт нового пользователя по email и паролю. В ответе возвращаются данные пользователя без пароля и других чувствительных данных.",
+    responses={
+        201: {
+            "description": "Пользователь успешно зарегистрирован",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "message": "User registered successfully",
+                        "user": {
+                            "id": 1,
+                            "email": "user@example.com",
+                        },
+                    }
+                }
+            },
+        },
+        400: {
+            "description": "Ошибка валидации данных",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Invalid input data"}
+                }
+            },
+        },
+        409: {
+            "description": "Пользователь с таким email уже существует",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "User already exists"}
+                }
+            },
+        },
+    },
 )
 def register(data: RegisterRequest, db: Session = Depends(get_db)):
     user = register_user(db, data)
@@ -59,6 +93,40 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
     "/login",
     response_model=AuthResponse,
     status_code=status.HTTP_200_OK,
+    summary="Войти в систему",
+    description="Проверяет email и пароль пользователя. При успешном входе устанавливает HttpOnly cookies access_token и refresh_token.",
+    responses={
+        200: {
+            "description": "Пользователь успешно вошёл в систему",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "message": "User logged in successfully",
+                        "user": {
+                            "id": 1,
+                            "email": "user@example.com",
+                        },
+                    }
+                }
+            },
+        },
+        400: {
+            "description": "Ошибка валидации данных",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Invalid input data"}
+                }
+            },
+        },
+        401: {
+            "description": "Неверный email или пароль",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Invalid credentials"}
+                }
+            },
+        },
+    },
 )
 def login(
     data: LoginRequest,
@@ -95,6 +163,32 @@ def login(
     "/whoami",
     response_model=AuthResponse,
     status_code=status.HTTP_200_OK,
+    summary="Получить текущего пользователя",
+    description="Возвращает данные текущего авторизованного пользователя. Требует HttpOnly cookie access_token.",
+    responses={
+        200: {
+            "description": "Пользователь успешно получен",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "message": "User is authenticated",
+                        "user": {
+                            "id": 1,
+                            "email": "user@example.com",
+                        },
+                    }
+                }
+            },
+        },
+        401: {
+            "description": "Пользователь не авторизован или access token недействителен",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Not authenticated"}
+                }
+            },
+        },
+    },
 )
 def whoami(current_user: User = Depends(get_current_user)):
     return {
@@ -107,6 +201,32 @@ def whoami(current_user: User = Depends(get_current_user)):
     "/refresh",
     response_model=AuthResponse,
     status_code=status.HTTP_200_OK,
+    summary="Обновить JWT-токены",
+    description="Обновляет access_token и refresh_token с использованием HttpOnly cookie refresh_token.",
+    responses={
+        200: {
+            "description": "Токены успешно обновлены",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "message": "Tokens refreshed successfully",
+                        "user": {
+                            "id": 1,
+                            "email": "user@example.com",
+                        },
+                    }
+                }
+            },
+        },
+        401: {
+            "description": "Refresh token отсутствует, истёк или недействителен",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Invalid refresh token"}
+                }
+            },
+        },
+    },
 )
 def refresh(
     response: Response,
@@ -146,6 +266,28 @@ def refresh(
     "/logout",
     response_model=MessageResponse,
     status_code=status.HTTP_200_OK,
+    summary="Выйти из текущей сессии",
+    description="Отзывает текущие access_token и refresh_token, после чего удаляет cookies из браузера.",
+    responses={
+        200: {
+            "description": "Пользователь успешно вышел из текущей сессии",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "message": "Logged out successfully",
+                    }
+                }
+            },
+        },
+        401: {
+            "description": "Токены отсутствуют или недействительны",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Not authenticated"}
+                }
+            },
+        },
+    },
 )
 def logout(
     response: Response,
@@ -171,6 +313,28 @@ def logout(
     "/logout-all",
     response_model=MessageResponse,
     status_code=status.HTTP_200_OK,
+    summary="Выйти со всех устройств",
+    description="Отзывает все активные токены пользователя и удаляет cookies текущей сессии. Требует HttpOnly cookie access_token.",
+    responses={
+        200: {
+            "description": "Пользователь успешно вышел со всех устройств",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "message": "Logged out from all sessions successfully",
+                    }
+                }
+            },
+        },
+        401: {
+            "description": "Пользователь не авторизован",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Not authenticated"}
+                }
+            },
+        },
+    },
 )
 def logout_all(
     response: Response,
@@ -189,6 +353,13 @@ def logout_all(
 @router.get(
     "/oauth/yandex",
     status_code=status.HTTP_302_FOUND,
+    summary="Начать OAuth-авторизацию через Яндекс",
+    description="Генерирует OAuth state, сохраняет его в HttpOnly cookie oauth_state и перенаправляет пользователя на страницу авторизации Яндекс ID.",
+    responses={
+        302: {
+            "description": "Перенаправление на страницу авторизации Яндекс ID",
+        }
+    },
 )
 def yandex_oauth_start(response: Response):
     state = generate_oauth_state()
@@ -210,6 +381,21 @@ def yandex_oauth_start(response: Response):
 @router.get(
     "/oauth/yandex/callback",
     status_code=status.HTTP_302_FOUND,
+    summary="Обработать callback от Яндекс OAuth",
+    description="Проверяет OAuth state, получает данные пользователя от Яндекса, создаёт или находит пользователя, устанавливает HttpOnly cookies access_token и refresh_token, затем перенаправляет клиента обратно в приложение.",
+    responses={
+        302: {
+            "description": "OAuth успешно обработан, пользователь перенаправлен в клиентское приложение",
+        },
+        401: {
+            "description": "Некорректный OAuth state",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Invalid OAuth state"}
+                }
+            },
+        },
+    },
 )
 async def yandex_oauth_callback(
     request: Request,
@@ -287,6 +473,29 @@ async def yandex_oauth_callback(
     "/forgot-password",
     response_model=ForgotPasswordResponse,
     status_code=status.HTTP_200_OK,
+    summary="Запросить сброс пароля",
+    description="Генерирует токен сброса пароля для пользователя по email. В учебном проекте токен возвращается в ответе, в реальном приложении обычно отправляется по email.",
+    responses={
+        200: {
+            "description": "Токен сброса пароля успешно создан",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "message": "Password reset token generated successfully",
+                        "reset_token": "reset-token-example",
+                    }
+                }
+            },
+        },
+        404: {
+            "description": "Пользователь с таким email не найден",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "User not found"}
+                }
+            },
+        },
+    },
 )
 def forgot_password_endpoint(
     data: ForgotPasswordRequest,
@@ -304,6 +513,28 @@ def forgot_password_endpoint(
     "/reset-password",
     response_model=MessageResponse,
     status_code=status.HTTP_200_OK,
+    summary="Сбросить пароль",
+    description="Проверяет токен сброса пароля и устанавливает новый пароль пользователя.",
+    responses={
+        200: {
+            "description": "Пароль успешно сброшен",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "message": "Password reset successfully",
+                    }
+                }
+            },
+        },
+        400: {
+            "description": "Некорректный или истёкший токен сброса пароля",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Invalid or expired reset token"}
+                }
+            },
+        },
+    },
 )
 def reset_password_endpoint(
     data: ResetPasswordRequest,
