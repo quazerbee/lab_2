@@ -4,10 +4,12 @@ from app.models.password_reset_token import PasswordResetToken
 from fastapi import HTTPException, status
 from jose import JWTError
 from sqlalchemy.orm import Session
+from app.cache.cache_service import cache_service
 
 from app.auth.security import (
     create_access_token,
     create_refresh_token,
+    decode_access_token,
     decode_refresh_token,
     generate_salt,
     hash_password,
@@ -19,6 +21,81 @@ from app.models.auth_token import AuthToken
 from app.models.user import User
 from app.schemas.auth import LoginRequest, RegisterRequest
 
+def get_access_jti_from_token(access_token: str | None) -> tuple[int | None, str | None]:
+    if not access_token:
+        return None, None
+
+    try:
+        payload = decode_access_token(access_token)
+    except JWTError:
+        return None, None
+
+    user_id = payload.get("sub")
+    jti = payload.get("jti")
+    token_type = payload.get("type")
+
+    if token_type != "access" or not user_id or not jti:
+        return None, None
+
+    return int(user_id), jti
+
+
+def access_jti_key(user_id: int, jti: str) -> str:
+    return f"wp:auth:user:{user_id}:access:{jti}"
+
+
+def save_access_jti(user_id: int, access_token: str) -> None:
+    payload = decode_access_token(access_token)
+    jti = payload.get("jti")
+
+    if not jti:
+        return
+
+    cache_service.set(
+        access_jti_key(user_id, jti),
+        "valid",
+        ttl=settings.JWT_ACCESS_EXPIRE_MINUTES * 60,
+    )
+
+
+def delete_access_jti(access_token: str | None) -> None:
+    user_id, jti = get_access_jti_from_token(access_token)
+
+    if user_id is None or jti is None:
+        return
+
+    cache_service.delete(access_jti_key(user_id, jti))
+
+
+def delete_all_user_access_jti(user_id: int) -> None:
+    cache_service.delete_by_pattern(f"wp:auth:user:{user_id}:access:*")
+
+def user_profile_key(user_id: int) -> str:
+    return f"wp:users:profile:{user_id}"
+
+
+def user_to_profile_cache(user: User) -> dict:
+    return {
+        "id": user.id,
+        "email": user.email,
+    }
+
+
+def get_cached_user_profile(user: User) -> dict:
+    key = user_profile_key(user.id)
+
+    cached_profile = cache_service.get(key)
+    if cached_profile is not None:
+        return cached_profile
+
+    profile = user_to_profile_cache(user)
+    cache_service.set(key, profile)
+
+    return profile
+
+
+def delete_user_profile_cache(user_id: int) -> None:
+    cache_service.delete(user_profile_key(user_id))
 
 def register_user(db: Session, data: RegisterRequest) -> User:
     existing_user = db.query(User).filter(User.email == data.email).first()
@@ -78,6 +155,8 @@ def login_user(db: Session, data: LoginRequest) -> tuple[User, str, str]:
 
     access_token = create_access_token(token_payload)
     refresh_token = create_refresh_token(token_payload)
+
+    save_access_jti(user.id, access_token)
 
     access_token_record = AuthToken(
         user_id=user.id,
@@ -167,6 +246,8 @@ def refresh_user_tokens(db: Session, refresh_token: str | None) -> tuple[User, s
     new_access_token = create_access_token(token_payload)
     new_refresh_token = create_refresh_token(token_payload)
 
+    save_access_jti(user.id, new_access_token)
+
     access_token_record = AuthToken(
         user_id=user.id,
         token_hash=hash_token(new_access_token),
@@ -196,6 +277,13 @@ def logout_current_session(
     access_token: str | None,
     refresh_token: str | None,
 ) -> None:
+    user_id, _ = get_access_jti_from_token(access_token)
+
+    delete_access_jti(access_token)
+
+    if user_id is not None:
+        delete_user_profile_cache(user_id)
+
     if access_token:
         db.query(AuthToken).filter(
             AuthToken.token_hash == hash_token(access_token),
@@ -212,6 +300,9 @@ def logout_current_session(
 
 
 def logout_all_sessions(db: Session, user: User) -> None:
+    delete_all_user_access_jti(user.id)
+    delete_user_profile_cache(user.id)
+
     db.query(AuthToken).filter(
         AuthToken.user_id == user.id,
         AuthToken.revoked.is_(False),

@@ -1,10 +1,18 @@
-# Лабораторная работа №4  
-## Автоматизированное документирование REST API с использованием OpenAPI / Swagger
+# Лабораторная работа №5
 
-Проект является продолжением **Лабораторной работы №3**.  
-К существующему REST API на **FastAPI** добавлена полноценная автоматическая документация API на основе **OpenAPI** и **Swagger UI**.
+## Кеширование данных и управление сессиями с использованием Redis
 
-В рамках работы были описаны endpoints, DTO-схемы, примеры запросов и ответов, возможные ошибки, cookie-based авторизация, OAuth через **Yandex ID**, а также реализовано отключение документации в production-режиме.
+Проект является продолжением лабораторных работ №2, №3 и №4.
+
+В рамках лабораторной работы №5 в существующее REST API на **FastAPI** добавлена интеграция с **Redis** для кеширования часто запрашиваемых данных и управления access-сессиями через хранение JTI access-токенов.
+
+Redis используется для:
+
+- кеширования списка пользовательских ресурсов `GET /items`;
+- кеширования профиля пользователя `GET /auth/whoami`;
+- хранения JTI access-токенов с TTL;
+- мгновенной инвалидации access-токена при logout;
+- инвалидации кеша при изменении данных.
 
 ---
 
@@ -12,18 +20,23 @@
 
 - [Описание проекта](#описание-проекта)
 - [Стек технологий](#стек-технологий)
-- [Что реализовано в лабораторной №4](#что-реализовано-в-лабораторной-4)
+- [Что реализовано в лабораторной №5](#что-реализовано-в-лабораторной-5)
 - [Структура проекта](#структура-проекта)
 - [Переменные окружения](#переменные-окружения)
 - [Запуск через Docker](#запуск-через-docker)
-- [Swagger / OpenAPI документация](#swagger--openapi-документация)
-- [Схемы авторизации в Swagger UI](#схемы-авторизации-в-swagger-ui)
-- [Production-режим](#production-режим)
+- [Redis](#redis)
+- [Кеширование items](#кеширование-items)
+- [Инвалидация кеша items](#инвалидация-кеша-items)
+- [Кеширование профиля пользователя](#кеширование-профиля-пользователя)
+- [Управление access token через JTI](#управление-access-token-через-jti)
+- [Logout через Redis](#logout-через-redis)
 - [API endpoints](#api-endpoints)
 - [Проверка через Swagger UI](#проверка-через-swagger-ui)
+- [Проверка Redis через CLI](#проверка-redis-через-cli)
+- [Swagger / OpenAPI документация](#swagger--openapi-документация)
+- [Production-режим](#production-режим)
 - [Yandex OAuth](#yandex-oauth)
-- [Безопасность документации](#безопасность-документации)
-- [Реализованные меры безопасности](#реализованные-меры-безопасности)
+- [Безопасность](#безопасность)
 - [Миграции базы данных](#миграции-базы-данных)
 - [Проверка данных в БД](#проверка-данных-в-бд)
 - [Контрольные вопросы](#контрольные-вопросы)
@@ -34,9 +47,9 @@
 
 ## Описание проекта
 
-REST API реализовано на **FastAPI** с использованием **PostgreSQL**, **SQLAlchemy**, **Alembic** и **Docker Compose**.
+REST API реализовано на **FastAPI** с использованием **PostgreSQL**, **SQLAlchemy**, **Alembic**, **Redis** и **Docker Compose**.
 
-Проект наследует функциональность лабораторных работ №2 и №3:
+Проект наследует функциональность предыдущих лабораторных работ:
 
 - CRUD API для ресурса `items`;
 - пагинация;
@@ -50,10 +63,21 @@ REST API реализовано на **FastAPI** с использованием
 - выход из всех сессий;
 - OAuth-вход через **Yandex ID**;
 - восстановление пароля через reset token;
-- защита пользовательских ресурсов через `owner_id`.
+- автоматическая документация API через OpenAPI / Swagger UI.
 
-В лабораторной работе №4 к проекту добавлена автоматическая документация API.  
-Документация генерируется из кода приложения, Pydantic DTO и metadata в роутерах, то есть используется подход **Code-First**.
+В лабораторной работе №5 к проекту добавлен Redis.
+
+Основная идея работы:
+
+```text
+Client → FastAPI → Redis → PostgreSQL
+```
+
+Для часто читаемых данных приложение сначала проверяет Redis.
+
+Если данные есть в кеше, они возвращаются сразу.
+
+Если данных нет, приложение обращается к PostgreSQL, сохраняет результат в Redis и возвращает ответ клиенту.
 
 ---
 
@@ -63,42 +87,41 @@ REST API реализовано на **FastAPI** с использованием
 | --- | --- |
 | Python 3.11 | Язык программирования |
 | FastAPI | Web API framework |
-| OpenAPI | Спецификация описания REST API |
-| Swagger UI | Интерактивный интерфейс документации |
-| Pydantic | DTO, схемы данных и валидация |
-| PostgreSQL 16 | База данных |
+| PostgreSQL 16 | Основная база данных |
+| Redis 7 | Кеш и хранение JTI access-токенов |
 | SQLAlchemy | ORM |
 | Alembic | Миграции базы данных |
+| Pydantic | DTO, схемы данных и валидация |
 | Uvicorn | ASGI-сервер |
 | Docker / Docker Compose | Контейнеризация |
 | python-jose | Работа с JWT |
 | passlib / bcrypt | Хеширование паролей |
+| redis-py | Клиент Redis для Python |
 | httpx | HTTP-запросы к OAuth-провайдеру |
+| OpenAPI / Swagger UI | Документация API |
 | Yandex ID | OAuth 2.0 провайдер |
 
 ---
 
-## Что реализовано в лабораторной №4
+## Что реализовано в лабораторной №5
 
 | Требование | Реализация |
 | --- | --- |
-| Автоматическая OpenAPI-документация | ✅ Используется встроенная генерация FastAPI |
-| Swagger UI | ✅ Доступен по `/api/docs` |
-| Code-First подход | ✅ Документация собирается из кода, DTO и роутеров |
-| Ручные YAML/JSON спецификации | ✅ Не используются |
-| Группировка endpoints по тегам | ✅ `Auth`, `Items`, `System`, `Schemas` |
-| Описания операций | ✅ Добавлены `summary` и `description` |
-| Примеры request body | ✅ Добавлены через Pydantic `Field` |
-| Примеры response body | ✅ Добавлены через `responses` |
-| Примеры ошибок | ✅ Описаны `400`, `401`, `403`, `404`, `409` |
-| DTO-схемы | ✅ Описаны через Pydantic-модели |
-| Скрытие чувствительных данных | ✅ Пароли, соли и токены не отображаются в response schemas |
-| Cookie-based auth | ✅ Добавлена OpenAPI security scheme `APIKeyCookie` для cookie `access_token` |
-| Защищённые endpoints | ✅ Помечены значком замка в Swagger UI |
-| Swagger Authorize | ✅ Доступны схемы `APIKeyCookie` и `YandexOAuth2` |
-| OAuth Yandex | ✅ Описаны OAuth start, callback endpoints и OAuth2-схема `YandexOAuth2` |
-| Production-режим | ✅ `/api/docs`, `/redoc`, `/openapi.json` отключаются |
-| Docker Compose | ✅ Проект запускается через `docker-compose up --build` |
+| Redis добавлен в Docker Compose | ✅ Сервис `redis` на базе `redis:7-alpine` |
+| Redis защищен паролем | ✅ Используется `REDIS_PASSWORD` |
+| Настройки Redis вынесены в `.env` | ✅ `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `CACHE_TTL_DEFAULT` |
+| Отдельный слой кеширования | ✅ `app/cache/cache_service.py` |
+| Методы кеш-сервиса | ✅ `get`, `set`, `delete`, `delete_by_pattern` |
+| TTL для ключей | ✅ Все ключи создаются с временем жизни |
+| Кеширование `GET /items` | ✅ С учетом `owner_id`, `limit`, `offset` |
+| Инвалидация items-кеша | ✅ При `POST`, `PUT`, `PATCH`, `DELETE` |
+| Кеширование `GET /auth/whoami` | ✅ Профиль пользователя сохраняется в Redis |
+| Инвалидация профиля | ✅ При logout профиль удаляется из Redis |
+| JTI access-токена | ✅ Access token содержит уникальный `jti` |
+| Хранение JTI в Redis | ✅ `wp:auth:user:{user_id}:access:{jti}` |
+| Проверка JTI при авторизации | ✅ Если JTI удален из Redis, access token недействителен |
+| Logout через Redis | ✅ При logout JTI удаляется из Redis |
+| Безопасность данных | ✅ Пароли и полные токены не хранятся в Redis |
 
 ---
 
@@ -107,11 +130,15 @@ REST API реализовано на **FastAPI** с использованием
 ```text
 app/
 ├── auth/
-│   ├── dependencies.py      # получение текущего пользователя из access_token cookie
+│   ├── dependencies.py      # получение текущего пользователя и проверка access token + Redis JTI
 │   ├── oauth_yandex.py      # Yandex OAuth flow
 │   ├── router.py            # auth endpoints + OpenAPI metadata
-│   ├── security.py          # JWT, password hash, token hash
-│   └── service.py           # auth business logic
+│   ├── security.py          # JWT, password hash, token hash, JTI
+│   └── service.py           # auth business logic + Redis JTI/profile cache
+│
+├── cache/
+│   ├── __init__.py
+│   └── cache_service.py     # общий сервис работы с Redis
 │
 ├── models/
 │   ├── auth_token.py
@@ -120,19 +147,19 @@ app/
 │   └── user.py
 │
 ├── routers/
-│   └── item_router.py       # items CRUD endpoints + OpenAPI metadata
+│   └── item_router.py       # items CRUD endpoints
 │
 ├── schemas/
-│   ├── auth.py              # auth DTO + examples
-│   ├── item.py              # item DTO + examples
-│   └── user.py              # safe user response schema
+│   ├── auth.py
+│   ├── item.py
+│   └── user.py
 │
 ├── services/
-│   └── item_service.py
+│   └── item_service.py      # бизнес-логика items + кеширование Redis
 │
 ├── config.py
 ├── database.py
-└── main.py                  # FastAPI app + Swagger/OpenAPI configuration
+└── main.py
 ```
 
 ---
@@ -162,6 +189,11 @@ DB_NAME=lab_db
 DB_HOST=postgres
 DB_PORT=5432
 
+REDIS_HOST=redis
+REDIS_PORT=6379
+REDIS_PASSWORD=change_me_redis_password
+CACHE_TTL_DEFAULT=300
+
 JWT_ACCESS_SECRET=change_me_access_secret
 JWT_REFRESH_SECRET=change_me_refresh_secret
 JWT_ACCESS_EXPIRE_MINUTES=15
@@ -173,7 +205,7 @@ YANDEX_CALLBACK_URL=http://localhost:8000/auth/oauth/yandex/callback
 CLIENT_URL=http://localhost:8000/api/docs
 ```
 
-> Файл `.env` не должен попадать в GitHub, так как может содержать реальные секреты.
+> Файл `.env` не должен попадать в GitHub, так как содержит секреты, пароли и OAuth credentials.
 
 ---
 
@@ -184,7 +216,7 @@ CLIENT_URL=http://localhost:8000/api/docs
 ```bash
 git clone https://github.com/quazerbee/lab_2.git
 cd lab_2
-git checkout lab4-openapi
+git checkout lab5-redis
 ```
 
 ### 2. Создать `.env`
@@ -199,20 +231,7 @@ cp .env.example .env
 copy .env.example .env
 ```
 
-Для запуска через Docker должно быть:
-
-```env
-DB_HOST=postgres
-APP_ENV=development
-```
-
 ### 3. Запустить контейнеры
-
-```bash
-docker-compose up --build -d
-```
-
-или:
 
 ```bash
 docker compose up --build -d
@@ -221,7 +240,7 @@ docker compose up --build -d
 ### 4. Проверить контейнеры
 
 ```bash
-docker ps
+docker compose ps
 ```
 
 Должны быть запущены контейнеры:
@@ -229,6 +248,15 @@ docker ps
 ```text
 lab_app
 lab_postgres
+lab_redis
+```
+
+Пример успешного состояния:
+
+```text
+lab_postgres   Up   healthy
+lab_redis      Up   healthy
+lab_app        Up
 ```
 
 ### 5. Применить миграции
@@ -255,156 +283,224 @@ http://localhost:8000/
 
 ---
 
-## Swagger / OpenAPI документация
+## Redis
 
-В режиме разработки Swagger UI доступен по адресу:
+В `docker-compose.yml` добавлен отдельный сервис Redis:
 
-```text
-http://localhost:8000/api/docs
+```yaml
+redis:
+  image: redis:7-alpine
+  container_name: lab_redis
+  restart: always
+  ports:
+    - "6379:6379"
+  command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
+  volumes:
+    - redis_data:/data
+  healthcheck:
+    test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
 ```
 
-OpenAPI JSON доступен по адресу:
+Redis используется как in-memory key-value хранилище.
+
+В проекте он применяется для:
+
+- кеширования списков `items`;
+- кеширования профиля пользователя;
+- хранения JTI access-токенов;
+- инвалидации сессий при logout.
+
+Все ключи имеют префикс `wp:`.
+
+Основные форматы ключей:
 
 ```text
-http://localhost:8000/openapi.json
+wp:items:list:user:{user_id}:limit:{limit}:offset:{offset}
+wp:items:item:{item_id}
+wp:users:profile:{user_id}
+wp:auth:user:{user_id}:access:{jti}
 ```
-
-ReDoc доступен по адресу:
-
-```text
-http://localhost:8000/redoc
-```
-
-В документации реализованы разделы:
-
-| Раздел | Назначение |
-| --- | --- |
-| `Auth` | Регистрация, логин, cookies, refresh, logout, OAuth, password reset |
-| `Items` | CRUD-операции над пользовательскими ресурсами |
-| `System` | Системные endpoints `/` и `/db-check` |
-| `Schemas` | DTO-схемы запросов и ответов |
-
-Документация содержит:
-
-- названия операций;
-- описания операций;
-- теги;
-- схемы DTO;
-- примеры request body;
-- примеры successful response;
-- примеры ошибок;
-- security schemes;
-- OAuth2 flow.
 
 ---
 
-## Схемы авторизации в Swagger UI
+## Кеширование items
 
-В Swagger UI доступна кнопка:
+Для endpoint:
 
 ```text
-Authorize
+GET /items?limit=10&offset=0
 ```
 
-В документации описаны две схемы безопасности:
+используется стратегия **Cache-Aside**.
 
-| Схема | Тип | Назначение |
+Логика работы:
+
+```text
+1. Пользователь вызывает GET /items.
+2. Приложение формирует Redis-ключ с user_id, limit и offset.
+3. Приложение проверяет наличие данных в Redis.
+4. Если данные есть, они возвращаются из кеша.
+5. Если данных нет, приложение делает запрос в PostgreSQL.
+6. Результат сохраняется в Redis с TTL.
+7. Ответ возвращается пользователю.
+```
+
+Пример ключа:
+
+```text
+wp:items:list:user:4:limit:10:offset:0
+```
+
+Параметры `limit` и `offset` включены в ключ, потому что разные страницы списка должны кешироваться отдельно.
+
+Примеры разных ключей:
+
+```text
+wp:items:list:user:4:limit:10:offset:0
+wp:items:list:user:4:limit:10:offset:10
+wp:items:list:user:4:limit:100:offset:0
+wp:items:list:user:4:limit:100:offset:10
+```
+
+---
+
+## Инвалидация кеша items
+
+Кеш списка items удаляется при любых операциях записи:
+
+| Метод | URI | Действие с кешем |
 | --- | --- | --- |
-| `APIKeyCookie` | `apiKey` in cookie | Авторизация через cookie `access_token` |
-| `YandexOAuth2` | OAuth2 Authorization Code Flow | Документирование OAuth2 flow через Yandex ID |
+| GET | `/items` | Чтение из кеша или запись в кеш |
+| POST | `/items` | Удаление кеша списков пользователя |
+| PUT | `/items/{item_id}` | Удаление кеша списков и конкретного item |
+| PATCH | `/items/{item_id}` | Удаление кеша списков и конкретного item |
+| DELETE | `/items/{item_id}` | Удаление кеша списков и конкретного item |
 
-Защищённые endpoints помечены значком замка.
+При изменении данных удаляются ключи по шаблону:
 
-Примеры защищённых endpoints:
+```text
+wp:items:list:user:{user_id}:*
+```
+
+Это нужно, чтобы пользователь не получил устаревший список после создания, изменения или удаления ресурса.
+
+---
+
+## Кеширование профиля пользователя
+
+Для endpoint:
 
 ```text
 GET /auth/whoami
-POST /auth/logout-all
-GET /items
-POST /items
-PUT /items/{item_id}
-PATCH /items/{item_id}
-DELETE /items/{item_id}
 ```
 
-Основной сценарий проверки cookie-авторизации:
+реализовано кеширование профиля пользователя.
 
-1. Выполнить `POST /auth/login`.
-2. Backend установит `HttpOnly` cookies:
-   - `access_token`;
-   - `refresh_token`.
-3. Выполнить `GET /auth/whoami`.
-4. Если ответ `200 OK`, авторизация работает.
-5. Выполнить `GET /items`.
-6. Если ответ `200 OK`, защищённые CRUD endpoints доступны авторизованному пользователю.
-
-> Токены не возвращаются в JSON response body.  
-> Они передаются через `Set-Cookie` и сохраняются браузером как `HttpOnly` cookies.
-
----
-
-## Production-режим
-
-Документация доступна только в режиме разработки.
-
-В `.env`:
-
-```env
-APP_ENV=development
-```
-
-Swagger доступен:
+Ключ:
 
 ```text
-http://localhost:8000/api/docs
+wp:users:profile:{user_id}
 ```
 
-Для проверки production-режима нужно изменить `.env`:
-
-```env
-APP_ENV=production
-```
-
-Перезапустить контейнеры:
-
-```bash
-docker-compose down
-docker-compose up --build -d
-```
-
-После этого документация должна быть недоступна:
+Пример:
 
 ```text
-http://localhost:8000/api/docs      → 404 Not Found
-http://localhost:8000/redoc         → 404 Not Found
-http://localhost:8000/openapi.json  → 404 Not Found
+wp:users:profile:4
 ```
 
-При этом основное API продолжает работать:
-
-```text
-http://localhost:8000/
-```
-
-Ожидаемый ответ:
+В Redis сохраняются только безопасные данные:
 
 ```json
 {
-  "message": "API is working"
+  "id": 4,
+  "email": "user@example.com"
 }
 ```
 
-После проверки production-режима нужно вернуть:
+В кеше не хранятся:
 
-```env
-APP_ENV=development
+- пароль;
+- хеш пароля;
+- соль пароля;
+- access token;
+- refresh token;
+- хеши токенов;
+- reset token.
+
+При logout кеш профиля удаляется.
+
+---
+
+## Управление access token через JTI
+
+В access token добавлен уникальный идентификатор `jti`.
+
+Пример payload access-токена:
+
+```json
+{
+  "sub": "4",
+  "email": "user@example.com",
+  "type": "access",
+  "jti": "51bff96e70c7474ab6b2c3c44c7d57a5",
+  "exp": 1234567890
+}
 ```
 
-и снова перезапустить контейнеры:
+После login JTI сохраняется в Redis:
 
-```bash
-docker-compose up --build -d
+```text
+wp:auth:user:4:access:51bff96e70c7474ab6b2c3c44c7d57a5
 ```
+
+Значение ключа:
+
+```text
+valid
+```
+
+TTL ключа равен времени жизни access token.
+
+Если `JWT_ACCESS_EXPIRE_MINUTES=15`, то TTL примерно равен:
+
+```text
+900 секунд
+```
+
+При каждом защищенном запросе приложение проверяет:
+
+```text
+1. Валидность JWT.
+2. Тип токена: access.
+3. Наличие sub.
+4. Наличие jti.
+5. Наличие соответствующего JTI-ключа в Redis.
+6. Наличие активного токена в PostgreSQL.
+```
+
+Если JTI отсутствует в Redis, access token считается отозванным.
+
+---
+
+## Logout через Redis
+
+При logout выполняется:
+
+```text
+1. Access token декодируется.
+2. Из него извлекаются user_id и jti.
+3. Redis-ключ JTI удаляется.
+4. Кеш профиля пользователя удаляется.
+5. Хеши access/refresh токенов помечаются как revoked в PostgreSQL.
+6. Cookies access_token и refresh_token удаляются.
+```
+
+После logout старый access token больше не может использоваться, даже если срок его действия еще не истек.
+
+Это решает проблему stateless JWT: токен остается криптографически валидным, но становится недействительным на уровне Redis-сессии.
 
 ---
 
@@ -424,10 +520,10 @@ docker-compose up --build -d
 | Метод | URI | Описание | Доступ |
 | --- | --- | --- | --- |
 | POST | `/auth/register` | Регистрация пользователя | Public |
-| POST | `/auth/login` | Логин и установка `HttpOnly` cookies | Public |
-| GET | `/auth/whoami` | Получение текущего пользователя | Private |
+| POST | `/auth/login` | Логин, создание JTI в Redis и установка cookies | Public |
+| GET | `/auth/whoami` | Получение текущего пользователя и кеширование профиля | Private |
 | POST | `/auth/refresh` | Обновление access и refresh токенов | Public, нужен `refresh_token` cookie |
-| POST | `/auth/logout` | Выход из текущей сессии | Private |
+| POST | `/auth/logout` | Выход из текущей сессии, удаление JTI и профиля из Redis | Private |
 | POST | `/auth/logout-all` | Выход со всех устройств | Private |
 | GET | `/auth/oauth/yandex` | Начало OAuth-авторизации через Yandex ID | Public |
 | GET | `/auth/oauth/yandex/callback` | Callback от Yandex ID | Public |
@@ -442,18 +538,18 @@ docker-compose up --build -d
 
 | Метод | URI | Описание |
 | --- | --- | --- |
-| POST | `/items` | Создать item |
-| GET | `/items` | Получить список своих items с пагинацией |
+| POST | `/items` | Создать item и инвалидировать кеш списков |
+| GET | `/items` | Получить список своих items с кешированием |
 | GET | `/items/{item_id}` | Получить свой item по ID |
-| PUT | `/items/{item_id}` | Полностью обновить item |
-| PATCH | `/items/{item_id}` | Частично обновить item |
-| DELETE | `/items/{item_id}` | Soft Delete item |
+| PUT | `/items/{item_id}` | Полностью обновить item и инвалидировать кеш |
+| PATCH | `/items/{item_id}` | Частично обновить item и инвалидировать кеш |
+| DELETE | `/items/{item_id}` | Soft Delete item и инвалидировать кеш |
 
 ---
 
 ## Проверка через Swagger UI
 
-Swagger UI:
+Swagger UI доступен по адресу:
 
 ```text
 http://localhost:8000/api/docs
@@ -482,12 +578,6 @@ Request body:
 
 ```text
 201 Created
-```
-
-Повторная регистрация с тем же email:
-
-```text
-409 Conflict
 ```
 
 ---
@@ -522,10 +612,10 @@ access_token
 refresh_token
 ```
 
-Cookies имеют флаг:
+Также в Redis появляется JTI access-токена:
 
 ```text
-HttpOnly
+wp:auth:user:{user_id}:access:{jti}
 ```
 
 ---
@@ -538,129 +628,23 @@ Endpoint:
 GET /auth/whoami
 ```
 
-Если пользователь авторизован:
+Ожидаемый результат:
 
 ```text
 200 OK
 ```
 
-Если cookies отсутствуют или токен недействителен:
+После запроса в Redis появляется кеш профиля:
 
 ```text
-401 Unauthorized
+wp:users:profile:{user_id}
 ```
 
 ---
 
-### 4. Обновление токенов
+### 4. Проверка кеширования items
 
-Endpoint:
-
-```text
-POST /auth/refresh
-```
-
-Использует `refresh_token` из cookies и выдаёт новую пару токенов:
-
-```text
-access_token
-refresh_token
-```
-
----
-
-### 5. Выход из текущей сессии
-
-Endpoint:
-
-```text
-POST /auth/logout
-```
-
-После logout cookies удаляются.
-
-Проверка:
-
-```text
-GET /auth/whoami → 401 Unauthorized
-```
-
----
-
-### 6. Выход со всех устройств
-
-Endpoint:
-
-```text
-POST /auth/logout-all
-```
-
-Отзывает все активные токены пользователя.
-
----
-
-### 7. Password reset
-
-Запрос reset token:
-
-```text
-POST /auth/forgot-password
-```
-
-Request body:
-
-```json
-{
-  "email": "test@example.com"
-}
-```
-
-Response body:
-
-```json
-{
-  "message": "Password reset token generated successfully",
-  "reset_token": "reset-token-example"
-}
-```
-
-Смена пароля:
-
-```text
-POST /auth/reset-password
-```
-
-Request body:
-
-```json
-{
-  "token": "reset-token-example",
-  "new_password": "NewPassword123"
-}
-```
-
-После успешной смены пароля:
-
-```text
-старый пароль → 401 Unauthorized
-новый пароль → 200 OK
-повторное использование reset token → ошибка
-```
-
-> В учебной реализации reset token возвращается в ответе.  
-> В production-приложении такой токен должен отправляться пользователю по email.
-
----
-
-### 8. Проверка защищённых items
-
-Без логина:
-
-```text
-GET /items → 401 Unauthorized
-```
-
-После логина:
+Создать item:
 
 ```text
 POST /items
@@ -675,33 +659,288 @@ Request body:
 }
 ```
 
-Ожидаемый ответ:
-
-```json
-{
-  "id": 1,
-  "name": "Ноутбук",
-  "description": "Рабочий ноутбук для разработки",
-  "owner_id": 1
-}
-```
-
-Получение списка:
+Получить список:
 
 ```text
 GET /items?limit=10&offset=0
 ```
 
-Удаление:
+После запроса в Redis появляется ключ:
 
 ```text
-DELETE /items/{item_id} → 204 No Content
+wp:items:list:user:{user_id}:limit:10:offset:0
 ```
 
-После удаления item не должен возвращаться в обычных запросах:
+---
+
+### 5. Проверка инвалидации items
+
+После того как кеш списка создан, выполнить:
 
 ```text
-GET /items/{item_id} → 404 Not Found
+POST /items
+```
+
+или:
+
+```text
+PUT /items/{item_id}
+PATCH /items/{item_id}
+DELETE /items/{item_id}
+```
+
+После этого кеш списков пользователя должен быть удален.
+
+---
+
+### 6. Проверка logout
+
+Endpoint:
+
+```text
+POST /auth/logout
+```
+
+После logout:
+
+- cookies удаляются;
+- JTI access-токена удаляется из Redis;
+- кеш профиля пользователя удаляется из Redis;
+- повторный запрос `GET /auth/whoami` возвращает `401 Unauthorized`.
+
+---
+
+## Проверка Redis через CLI
+
+Подключиться к Redis CLI:
+
+```bash
+docker exec -it lab_redis redis-cli -a redis_secure_password_change_me
+```
+
+Проверить соединение:
+
+```redis
+PING
+```
+
+Ожидаемый ответ:
+
+```text
+PONG
+```
+
+---
+
+### Просмотр всех ключей проекта
+
+```redis
+KEYS wp:*
+```
+
+---
+
+### Проверка кеша items
+
+```redis
+KEYS wp:items:*
+```
+
+Пример результата:
+
+```text
+1) "wp:items:list:user:4:limit:10:offset:0"
+```
+
+Проверить TTL:
+
+```redis
+TTL wp:items:list:user:4:limit:10:offset:0
+```
+
+Пример результата:
+
+```text
+(integer) 176
+```
+
+Получить значение:
+
+```redis
+GET wp:items:list:user:4:limit:10:offset:0
+```
+
+---
+
+### Проверка кеша профиля пользователя
+
+```redis
+KEYS wp:users:*
+```
+
+Пример результата:
+
+```text
+1) "wp:users:profile:4"
+```
+
+Проверить TTL:
+
+```redis
+TTL wp:users:profile:4
+```
+
+Получить значение:
+
+```redis
+GET wp:users:profile:4
+```
+
+Пример значения:
+
+```json
+"{\"id\": 4, \"email\": \"user@example.com\"}"
+```
+
+---
+
+### Проверка JTI access-токена
+
+```redis
+KEYS wp:auth:*
+```
+
+Пример результата:
+
+```text
+1) "wp:auth:user:4:access:51bff96e70c7474ab6b2c3c44c7d57a5"
+```
+
+Проверить TTL:
+
+```redis
+TTL wp:auth:user:4:access:51bff96e70c7474ab6b2c3c44c7d57a5
+```
+
+Пример результата:
+
+```text
+(integer) 786
+```
+
+---
+
+### Проверка logout
+
+После выполнения:
+
+```text
+POST /auth/logout
+```
+
+проверить Redis:
+
+```redis
+KEYS wp:*
+```
+
+Ожидаемый результат:
+
+```text
+(empty array)
+```
+
+Если были созданы только auth/profile ключи текущего пользователя, после logout они должны исчезнуть.
+
+---
+
+### Очистка Redis для тестов
+
+```redis
+FLUSHDB
+```
+
+---
+
+## Swagger / OpenAPI документация
+
+В режиме разработки Swagger UI доступен по адресу:
+
+```text
+http://localhost:8000/api/docs
+```
+
+OpenAPI JSON доступен по адресу:
+
+```text
+http://localhost:8000/openapi.json
+```
+
+ReDoc доступен по адресу:
+
+```text
+http://localhost:8000/redoc
+```
+
+Документация содержит:
+
+- группы endpoints;
+- DTO-схемы;
+- примеры запросов;
+- примеры ответов;
+- описания ошибок;
+- cookie-based авторизацию;
+- OAuth2 flow через Yandex ID.
+
+---
+
+## Production-режим
+
+Документация доступна только в режиме разработки.
+
+В `.env`:
+
+```env
+APP_ENV=development
+```
+
+Swagger доступен:
+
+```text
+http://localhost:8000/api/docs
+```
+
+Для проверки production-режима нужно изменить `.env`:
+
+```env
+APP_ENV=production
+```
+
+Перезапустить контейнеры:
+
+```bash
+docker compose down
+docker compose up --build -d
+```
+
+После этого документация должна быть недоступна:
+
+```text
+http://localhost:8000/api/docs      → 404 Not Found
+http://localhost:8000/redoc         → 404 Not Found
+http://localhost:8000/openapi.json  → 404 Not Found
+```
+
+При этом основное API продолжает работать:
+
+```text
+http://localhost:8000/
+```
+
+После проверки production-режима нужно вернуть:
+
+```env
+APP_ENV=development
 ```
 
 ---
@@ -710,13 +949,7 @@ GET /items/{item_id} → 404 Not Found
 
 В проекте реализован OAuth-вход через **Yandex ID**.
 
-Есть два сценария использования OAuth.
-
----
-
-### 1. Основной backend OAuth flow
-
-Основной рабочий сценарий приложения начинается через endpoint:
+Основной OAuth flow начинается через endpoint:
 
 ```text
 GET /auth/oauth/yandex
@@ -736,10 +969,12 @@ http://localhost:8000/auth/oauth/yandex
 4. После подтверждения Яндекс возвращает пользователя на backend callback.
 5. Backend проверяет `state`.
 6. Backend получает данные пользователя от Яндекса.
-7. Backend создаёт или находит локального пользователя.
-8. Backend создаёт JWT access и refresh tokens.
-9. Backend устанавливает `access_token` и `refresh_token` в `HttpOnly` cookies.
-10. Пользователь перенаправляется на `CLIENT_URL`.
+7. Backend создает или находит локального пользователя.
+8. Backend создает JWT access и refresh tokens.
+9. Access token получает уникальный `jti`.
+10. JTI access-токена сохраняется в Redis.
+11. Backend устанавливает `access_token` и `refresh_token` в `HttpOnly` cookies.
+12. Пользователь перенаправляется на `CLIENT_URL`.
 
 После этого можно проверить авторизацию:
 
@@ -755,126 +990,9 @@ GET /auth/whoami
 
 ---
 
-### 2. Swagger OAuth2 flow
+## Безопасность
 
-В Swagger UI также добавлена схема:
-
-```text
-YandexOAuth2
-```
-
-Она отображается в окне:
-
-```text
-Authorize
-```
-
-и документирует OAuth2 Authorization Code Flow через Yandex ID.
-
-Swagger OAuth2 flow использует служебный redirect:
-
-```text
-http://localhost:8000/api/docs/oauth2-redirect
-```
-
----
-
-### Настройки приложения в Yandex OAuth
-
-Для корректной работы нужно создать приложение в Yandex OAuth / Yandex ID.
-
-Тип приложения:
-
-```text
-Для авторизации пользователей
-```
-
-Платформа:
-
-```text
-Веб-сервисы
-```
-
-В настройках приложения должны быть указаны два Callback URL:
-
-```text
-http://localhost:8000/auth/oauth/yandex/callback
-http://localhost:8000/api/docs/oauth2-redirect
-```
-
-Назначение callback URL:
-
-| Callback URL | Назначение |
-| --- | --- |
-| `/auth/oauth/yandex/callback` | Backend callback для реального входа через Яндекс |
-| `/api/docs/oauth2-redirect` | Swagger UI redirect для схемы `YandexOAuth2` |
-
-Рекомендуемые права:
-
-```text
-Доступ к адресу электронной почты
-Доступ к логину, имени и фамилии, полу
-```
-
-После создания приложения нужно указать в `.env`:
-
-```env
-YANDEX_CLIENT_ID=your_yandex_client_id
-YANDEX_CLIENT_SECRET=your_yandex_client_secret
-YANDEX_CALLBACK_URL=http://localhost:8000/auth/oauth/yandex/callback
-CLIENT_URL=http://localhost:8000/api/docs
-```
-
----
-
-## Безопасность документации
-
-В лабораторной работе №4 отдельно проверяется, что документация не раскрывает чувствительные данные.
-
-В Swagger-схемах ответов используется безопасная модель пользователя:
-
-```text
-UserResponse
-```
-
-Она содержит только:
-
-```text
-id
-email
-created_at
-updated_at
-deleted_at
-```
-
-В Swagger не отображаются:
-
-```text
-password
-password_hash
-password_salt
-access_token
-refresh_token
-token_hash
-```
-
-Также документация отключается в production-режиме:
-
-```env
-APP_ENV=production
-```
-
-В этом режиме недоступны:
-
-```text
-/api/docs
-/redoc
-/openapi.json
-```
-
----
-
-## Реализованные меры безопасности
+В проекте реализованы следующие меры безопасности:
 
 | Механизм | Реализация |
 | --- | --- |
@@ -883,14 +1001,17 @@ APP_ENV=production
 | Access Token | JWT, короткий срок жизни |
 | Refresh Token | JWT, длительный срок жизни |
 | Передача токенов | Через `HttpOnly` cookies |
-| Хранение токенов | В БД хранится только хеш токена |
-| Logout | Токены помечаются как `revoked=True` |
-| Logout all | Отзываются все токены пользователя |
+| Хранение токенов в БД | В БД хранится только хеш токена |
+| JTI access token | В Redis хранится только идентификатор токена |
+| Полный access token в Redis | Не хранится |
+| Пароли в Redis | Не хранятся |
+| TTL ключей Redis | Используется для всех ключей |
+| Redis password | Подключение защищено паролем |
+| Logout | Удаляет JTI из Redis и помечает токены revoked в БД |
+| Logout all | Удаляет все JTI пользователя и отзывает токены в БД |
 | OAuth CSRF protection | Используется параметр `state` |
 | Reset password | Reset token хранится в БД в виде хеша |
 | Items ownership | Проверка `owner_id` |
-| Swagger Cookie Auth | `APIKeyCookie` для cookie `access_token` |
-| Swagger OAuth2 | `YandexOAuth2` Authorization Code Flow |
 | Swagger в production | Отключается через `APP_ENV=production` |
 
 ---
@@ -968,203 +1089,247 @@ FROM items
 ORDER BY id ASC;
 ```
 
-Удалённые записи остаются в базе, но имеют заполненное поле `deleted_at`.
+Удаленные записи остаются в базе, но имеют заполненное поле `deleted_at`.
 
 ---
 
 ## Контрольные вопросы
 
-### 1. Что такое спецификация OpenAPI и чем она отличается от Swagger UI?
+### 1. В чем разница между Cache-Aside и Write-Through?
 
-**OpenAPI** — это спецификация, которая описывает REST API в стандартизированном виде: пути, HTTP-методы, параметры, request body, response body, схемы данных, коды ответов и способы авторизации.
+**Cache-Aside** — приложение само управляет кешем.
 
-**Swagger UI** — это визуальный интерфейс, который отображает OpenAPI-спецификацию в браузере и позволяет тестировать API.
-
-Иными словами:
+Сначала оно проверяет кеш. Если данных нет, получает их из БД, кладет в кеш и возвращает клиенту.
 
 ```text
-OpenAPI — это описание API.
-Swagger UI — это интерфейс для просмотра и тестирования этого описания.
+Read:
+App → Redis
+если miss:
+App → PostgreSQL → Redis → Client
 ```
+
+**Write-Through** — данные записываются в кеш и базу одновременно через единый слой записи.
+
+При такой стратегии кеш обновляется сразу во время записи.
+
+В данной лабораторной работе используется стратегия **Cache-Aside**.
 
 ---
 
-### 2. Какие существуют подходы к созданию документации: Code-First и Design-First? Какой использовался в этой работе?
+### 2. Что такое Thundering Herd problem?
 
-Существует два основных подхода:
+**Thundering Herd problem** — ситуация, когда много клиентов одновременно запрашивают один и тот же ключ после его истечения.
 
-| Подход | Описание |
-| --- | --- |
-| Code-First | Сначала пишется код приложения, затем документация генерируется из кода |
-| Design-First | Сначала вручную проектируется OpenAPI-спецификация, затем по ней реализуется API |
-
-В этой работе использовался **Code-First** подход.
-
-FastAPI автоматически генерирует OpenAPI-документацию на основе:
-
-- роутеров;
-- Pydantic DTO;
-- типов данных;
-- параметров функций;
-- `summary`;
-- `description`;
-- `responses`;
-- security schemes.
-
-Плюсы Code-First:
-
-- документация ближе к реальному коду;
-- меньше риска рассинхронизации;
-- быстрее в небольших проектах;
-- удобно для учебного REST API.
-
-Минусы:
-
-- сложнее заранее проектировать API-контракт;
-- документация зависит от качества аннотаций в коде;
-- без дополнительных описаний Swagger может быть слишком сухим.
-
----
-
-### 3. Почему важно скрывать документацию API в production?
-
-Открытая документация в production может раскрывать лишнюю информацию:
-
-- список всех endpoints;
-- структуру DTO;
-- protected routes;
-- параметры запросов;
-- возможные ошибки;
-- внутренние названия сущностей;
-- схемы авторизации.
-
-Это может помочь злоумышленнику быстрее понять устройство API и подобрать вектор атаки.
-
-В проекте документация отключается при:
-
-```env
-APP_ENV=production
-```
-
-В этом режиме недоступны:
+Например:
 
 ```text
-/api/docs
-/redoc
-/openapi.json
+Популярный ключ истек.
+1000 запросов одновременно получили cache miss.
+Все 1000 запросов пошли в PostgreSQL.
+База получила резкий скачок нагрузки.
 ```
+
+Кеш может как помочь, так и усугубить проблему.
+
+Он помогает снижать нагрузку при cache hit, но при массовом cache miss может создать резкий всплеск запросов к базе.
 
 ---
 
-### 4. Как правильно документировать схемы безопасности, если приложение использует HttpOnly Cookies?
+### 3. Почему не рекомендуется использовать `KEYS *` в production?
 
-Если приложение использует `HttpOnly` cookies, токен нельзя вручную прочитать через JavaScript. Браузер сам отправляет cookies при запросах к тому же домену.
+Команда `KEYS *` сканирует все ключи Redis сразу.
 
-В OpenAPI такую авторизацию можно описать через схему типа `apiKey` с расположением `in: cookie`.
+На маленькой учебной базе это удобно, но в production это опасно:
 
-В этом проекте используется схема:
+- команда может выполняться долго;
+- Redis однопоточный;
+- другие запросы могут ждать завершения `KEYS`;
+- возможна деградация производительности.
+
+В коде лучше использовать `SCAN`, поэтому в проекте для удаления по паттерну используется:
 
 ```text
-APIKeyCookie
+scan_iter(match=pattern)
 ```
 
-Cookie:
+---
+
+### 4. Как обеспечить согласованность данных между БД и кешем при одновременной записи?
+
+Основной способ — инвалидировать или обновлять кеш сразу после успешной записи в БД.
+
+В этом проекте используется подход:
 
 ```text
-access_token
+1. Изменить данные в PostgreSQL.
+2. Выполнить commit.
+3. Удалить связанные ключи Redis.
+4. Следующий GET заново заполнит кеш актуальными данными.
 ```
 
-Сценарий проверки:
-
-1. Выполнить `POST /auth/login`.
-2. Сервер установит `HttpOnly` cookies.
-3. Выполнить защищённый endpoint, например `GET /auth/whoami`.
-4. Браузер автоматически отправит cookies.
-5. Если токен валиден, API вернёт `200 OK`.
+Такой подход уменьшает риск того, что пользователь получит устаревшие данные.
 
 ---
 
-### 5. Зачем нужны примеры в документации API?
+### 5. Зачем нужен TTL, если есть инвалидация кеша?
 
-Примеры помогают быстрее понять, как использовать API.
+TTL нужен как дополнительная страховка.
 
-Они показывают:
+Даже если инвалидация где-то не сработает, ключ не будет жить бесконечно.
 
-- какие поля нужно отправлять;
-- какие значения являются валидными;
-- как выглядит успешный ответ;
-- как выглядят ошибки;
-- как устроены вложенные объекты;
-- как frontend-разработчику обрабатывать ответы.
+Через заданное время Redis сам удалит устаревшие данные.
 
-Например, вместо абстрактного body:
+TTL также помогает:
 
-```json
-{
-  "email": "string",
-  "password": "string"
-}
+- ограничивать использование памяти;
+- автоматически очищать старые ключи;
+- снижать риск вечного хранения неактуальных данных.
+
+---
+
+### 6. Почему хранение JTI в Redis позволяет реализовать мгновенный logout?
+
+JWT обычно stateless.
+
+Если токен подписан правильно и срок действия не истек, приложение считает его валидным.
+
+JTI решает эту проблему.
+
+Access token получает уникальный идентификатор:
+
+```text
+jti
 ```
 
-Swagger показывает понятный пример:
+Этот JTI сохраняется в Redis.
 
-```json
-{
-  "email": "user@example.com",
-  "password": "StrongPassword123"
-}
+При каждом защищенном запросе приложение проверяет, существует ли JTI в Redis.
+
+Если пользователь делает logout, ключ JTI удаляется:
+
+```text
+wp:auth:user:{user_id}:access:{jti}
+```
+
+После этого токен больше не принимается, даже если его `exp` еще не истек.
+
+---
+
+### 7. Какие данные безопасно кешировать, а какие нет?
+
+Безопасно кешировать:
+
+- ID пользователя;
+- email;
+- список items;
+- публичные или несекретные поля ресурсов;
+- JTI access-токена;
+- технические значения вроде `valid`.
+
+Нельзя кешировать:
+
+- пароль;
+- хеш пароля;
+- соль пароля;
+- полный access token;
+- полный refresh token;
+- reset token;
+- чувствительные персональные данные без необходимости.
+
+---
+
+### 8. Как повлияет перезапуск Redis на работу приложения?
+
+Redis используется как вспомогательный слой.
+
+Если Redis перезапустится:
+
+- часть кеша может быть потеряна;
+- первые запросы снова пойдут в PostgreSQL;
+- кеш постепенно заполнится заново.
+
+В проекте включен AOF:
+
+```text
+--appendonly yes
+```
+
+Это позволяет Redis сохранять данные на диск.
+
+Но приложение не должно полностью зависеть от кеша: основным источником данных остается PostgreSQL.
+
+---
+
+### 9. Что такое сериализация и зачем она нужна при сохранении объектов в Redis?
+
+Redis хранит значения в виде строк.
+
+Python-объекты, например SQLAlchemy-модели, нельзя напрямую сохранить в Redis.
+
+Поэтому объект преобразуется в словарь, а затем в JSON-строку:
+
+```text
+Python object → dict → JSON string → Redis
+```
+
+При чтении происходит обратное преобразование:
+
+```text
+Redis string → JSON → Python dict
+```
+
+В проекте для этого используются:
+
+```python
+json.dumps()
+json.loads()
 ```
 
 ---
 
-### 6. Какие HTTP-коды ответов обязательно должны быть описаны для CRUD операций?
+### 10. Как префиксы ключей помогают в управлении кешем?
 
-Для CRUD-операций обычно описываются:
+Префиксы помогают структурировать ключи и избегать конфликтов.
 
-| Код | Значение | Когда используется |
-| --- | --- | --- |
-| 200 | OK | Успешное получение или обновление |
-| 201 | Created | Успешное создание ресурса |
-| 204 | No Content | Успешное удаление без тела ответа |
-| 400 | Bad Request | Некорректные параметры запроса |
-| 401 | Unauthorized | Пользователь не авторизован |
-| 403 | Forbidden | Нет прав на ресурс |
-| 404 | Not Found | Ресурс не найден |
-| 409 | Conflict | Конфликт данных, например дубликат |
-| 422 | Unprocessable Entity | Ошибка валидации Pydantic |
-| 500 | Internal Server Error | Внутренняя ошибка сервера |
+В проекте используется общий префикс:
+
+```text
+wp:
+```
+
+Примеры:
+
+```text
+wp:items:list:user:4:limit:10:offset:0
+wp:users:profile:4
+wp:auth:user:4:access:51bff96e70c7474ab6b2c3c44c7d57a5
+```
+
+Так можно удобно искать и удалять связанные ключи:
+
+```redis
+KEYS wp:items:*
+KEYS wp:auth:*
+KEYS wp:users:*
+```
 
 ---
 
-## Финальная проверка перед сдачей
+### 11. Зачем защищать Redis паролем даже внутри Docker-сети?
 
-Перед сдачей проекта проверьте:
+Redis может содержать важные данные:
 
-- [ ] Создана отдельная ветка `lab4-openapi`.
-- [ ] `docker-compose up --build -d` запускает проект.
-- [ ] `docker exec -it lab_app python -m alembic upgrade head` применяет миграции.
-- [ ] При `APP_ENV=development` Swagger доступен по `/api/docs`.
-- [ ] При `APP_ENV=production` `/api/docs` возвращает `404 Not Found`.
-- [ ] При `APP_ENV=production` основное API `/` продолжает работать.
-- [ ] В Swagger есть группы `Auth`, `Items`, `System`, `Schemas`.
-- [ ] В Swagger UI есть кнопка `Authorize`.
-- [ ] В `Authorize` есть схема `APIKeyCookie`.
-- [ ] В `Authorize` есть схема `YandexOAuth2`.
-- [ ] Защищённые endpoints помечены значком замка.
-- [ ] Все endpoints из лабораторных №2 и №3 отображаются.
-- [ ] У endpoints есть `summary` и `description`.
-- [ ] У успешных ответов есть примеры.
-- [ ] У ошибок `400`, `401`, `403`, `404`, `409` есть примеры.
-- [ ] DTO содержат descriptions и examples.
-- [ ] `UserResponse` не содержит пароли, соли, токены и `token_hash`.
-- [ ] `/auth/login` устанавливает `HttpOnly` cookies.
-- [ ] `/auth/whoami` работает после логина.
-- [ ] `/items` защищены авторизацией.
-- [ ] Yandex OAuth работает через `/auth/oauth/yandex`.
-- [ ] Swagger OAuth2 redirect добавлен в callback URLs Яндекс-приложения.
-- [ ] `.env.example` содержит все нужные переменные.
-- [ ] `.env` не попал в GitHub.
-- [ ] Проект запушен на GitHub/GitLab.
+- идентификаторы активных сессий;
+- кеш пользовательских данных;
+- технические ключи приложения.
+
+Даже если Redis находится внутри Docker-сети, защита паролем снижает риск несанкционированного доступа при неправильной настройке сети, пробросе портов или компрометации соседнего контейнера.
+
+В проекте Redis запускается с параметром:
+
+```text
+--requirepass ${REDIS_PASSWORD}
+```
 
 ---
 

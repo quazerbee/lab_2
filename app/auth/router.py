@@ -11,6 +11,7 @@ from app.auth.service import (
     register_user,
     forgot_password,
     reset_password,
+    get_cached_user_profile,
 )
 from app.auth.oauth_yandex import (
     build_yandex_auth_url,
@@ -191,6 +192,8 @@ def login(
     },
 )
 def whoami(current_user: User = Depends(get_current_user)):
+    get_cached_user_profile(current_user)
+
     return {
         "message": "User is authenticated",
         "user": current_user,

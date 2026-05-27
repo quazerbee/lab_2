@@ -35,6 +35,7 @@ def create_access_token(payload: Dict[str, Any]) -> str:
     data.update({
         "exp": expire,
         "type": "access",
+        "jti": uuid4().hex,
     })
 
     return jwt.encode(

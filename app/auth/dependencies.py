@@ -10,6 +10,8 @@ from app.database import get_db
 from app.models.auth_token import AuthToken
 from app.models.user import User
 
+from app.auth.service import access_jti_key
+from app.cache.cache_service import cache_service
 
 access_token_cookie = APIKeyCookie(
     name="access_token",
@@ -39,10 +41,20 @@ def get_current_user(
     token_type = payload.get("type")
     user_id = payload.get("sub")
 
-    if token_type != "access" or not user_id:
+    jti = payload.get("jti")
+
+    if token_type != "access" or not user_id or not jti:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid access token",
+        )
+    
+    redis_key = access_jti_key(int(user_id), jti)
+
+    if cache_service.get(redis_key) is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Access token was revoked or expired in Redis",
         )
 
     token_record = (
