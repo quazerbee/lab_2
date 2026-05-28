@@ -1,20 +1,17 @@
-
-
 services:
-  postgres:
-    image: postgres:16
-    container_name: lab_postgres
+  mongo:
+    image: mongo:6
+    container_name: lab_mongo
     restart: always
     environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: ${DB_NAME}
+      MONGO_INITDB_ROOT_USERNAME: ${DB_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${DB_PASSWORD}
     ports:
-      - "5432:5432"
+      - "27017:27017"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - mongo_data:/data/db
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -41,7 +38,7 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      postgres:
+      mongo:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -49,12 +46,10 @@ services:
       - .env
     environment:
       APP_ENV: ${APP_ENV}
-
-      DB_HOST: postgres
-      DB_PORT: ${DB_PORT}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: ${DB_NAME}
+      MONGO_URI: ${MONGO_URI}
 
       REDIS_HOST: redis
       REDIS_PORT: ${REDIS_PORT}
@@ -72,5 +67,5 @@ services:
       CLIENT_URL: ${CLIENT_URL}
 
 volumes:
-  postgres_data:
+  mongo_data:
   redis_data:

@@ -1,28 +1,22 @@
 from datetime import datetime
+from typing import Optional
 
-from sqlalchemy import Column, DateTime, Integer, String
+from beanie import Document, Indexed
+from pydantic import Field
 
-from app.database import Base
 
+class User(Document):
+    email: Indexed(str, unique=True)
 
-class User(Base):
-    __tablename__ = "users"
+    password_hash: Optional[str] = None
+    password_salt: Optional[str] = None
 
-    id = Column(Integer, primary_key=True, index=True)
+    yandex_id: Optional[Indexed(str, unique=True)] = None
+    vk_id: Optional[Indexed(str, unique=True)] = None
 
-    email = Column(String, unique=True, index=True, nullable=False)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    deleted_at: Optional[datetime] = None
 
-    password_hash = Column(String, nullable=True)
-    password_salt = Column(String, nullable=True)
-
-    yandex_id = Column(String, unique=True, index=True, nullable=True)
-    vk_id = Column(String, unique=True, index=True, nullable=True)
-
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(
-        DateTime,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-        nullable=False,
-    )
-    deleted_at = Column(DateTime, nullable=True)
+    class Settings:
+        name = "users"

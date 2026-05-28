@@ -1,32 +1,24 @@
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
-from sqlalchemy.orm import relationship
 from datetime import datetime
+from typing import Optional
 
-from app.database import Base
+from beanie import Document, Indexed
+from pydantic import Field
+from pymongo import IndexModel
 
 
-class Item(Base):
-    __tablename__ = "items"
+class Item(Document):
+    owner_id: Optional[str] = Field(default=None)
 
-    id = Column(Integer, primary_key=True, index=True)
+    name: Indexed(str)
+    description: Optional[str] = None
 
-    owner_id = Column(
-        Integer,
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=True,
-        index=True,
-    )
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    deleted_at: Optional[datetime] = None
 
-    name = Column(String, nullable=False)
-    description = Column(String, nullable=True)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(
-        DateTime,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-    )
-
-    deleted_at = Column(DateTime, nullable=True)
-
-    owner = relationship("User")
+    class Settings:
+        name = "items"
+        indexes = [
+            IndexModel([("owner_id", 1)]),
+            IndexModel([("deleted_at", 1)]),
+        ]

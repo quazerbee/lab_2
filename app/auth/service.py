@@ -1,11 +1,11 @@
 from datetime import datetime, timedelta
 from uuid import uuid4
-from app.models.password_reset_token import PasswordResetToken
+
+from bson import ObjectId
 from fastapi import HTTPException, status
 from jose import JWTError
-from sqlalchemy.orm import Session
-from app.cache.cache_service import cache_service
 
+from app.cache.cache_service import cache_service
 from app.auth.security import (
     create_access_token,
     create_refresh_token,
@@ -18,10 +18,19 @@ from app.auth.security import (
 )
 from app.config import settings
 from app.models.auth_token import AuthToken
+from app.models.password_reset_token import PasswordResetToken
 from app.models.user import User
 from app.schemas.auth import LoginRequest, RegisterRequest
 
-def get_access_jti_from_token(access_token: str | None) -> tuple[int | None, str | None]:
+
+def normalize_user_id(user_id: str) -> ObjectId | None:
+    if not ObjectId.is_valid(user_id):
+        return None
+
+    return ObjectId(user_id)
+
+
+def get_access_jti_from_token(access_token: str | None) -> tuple[str | None, str | None]:
     if not access_token:
         return None, None
 
@@ -37,14 +46,14 @@ def get_access_jti_from_token(access_token: str | None) -> tuple[int | None, str
     if token_type != "access" or not user_id or not jti:
         return None, None
 
-    return int(user_id), jti
+    return user_id, jti
 
 
-def access_jti_key(user_id: int, jti: str) -> str:
+def access_jti_key(user_id: str, jti: str) -> str:
     return f"wp:auth:user:{user_id}:access:{jti}"
 
 
-def save_access_jti(user_id: int, access_token: str) -> None:
+def save_access_jti(user_id: str, access_token: str) -> None:
     payload = decode_access_token(access_token)
     jti = payload.get("jti")
 
@@ -67,22 +76,24 @@ def delete_access_jti(access_token: str | None) -> None:
     cache_service.delete(access_jti_key(user_id, jti))
 
 
-def delete_all_user_access_jti(user_id: int) -> None:
+def delete_all_user_access_jti(user_id: str) -> None:
     cache_service.delete_by_pattern(f"wp:auth:user:{user_id}:access:*")
 
-def user_profile_key(user_id: int) -> str:
+
+def user_profile_key(user_id: str) -> str:
     return f"wp:users:profile:{user_id}"
 
 
 def user_to_profile_cache(user: User) -> dict:
     return {
-        "id": user.id,
+        "id": str(user.id),
         "email": user.email,
     }
 
 
 def get_cached_user_profile(user: User) -> dict:
-    key = user_profile_key(user.id)
+    user_id = str(user.id)
+    key = user_profile_key(user_id)
 
     cached_profile = cache_service.get(key)
     if cached_profile is not None:
@@ -94,11 +105,12 @@ def get_cached_user_profile(user: User) -> dict:
     return profile
 
 
-def delete_user_profile_cache(user_id: int) -> None:
+def delete_user_profile_cache(user_id: str) -> None:
     cache_service.delete(user_profile_key(user_id))
 
-def register_user(db: Session, data: RegisterRequest) -> User:
-    existing_user = db.query(User).filter(User.email == data.email).first()
+
+async def register_user(data: RegisterRequest) -> User:
+    existing_user = await User.find_one(User.email == data.email)
 
     if existing_user:
         raise HTTPException(
@@ -115,19 +127,15 @@ def register_user(db: Session, data: RegisterRequest) -> User:
         password_salt=salt,
     )
 
-    db.add(user)
-    db.commit()
-    db.refresh(user)
+    await user.insert()
 
     return user
 
 
-def login_user(db: Session, data: LoginRequest) -> tuple[User, str, str]:
-    user = (
-        db.query(User)
-        .filter(User.email == data.email)
-        .filter(User.deleted_at.is_(None))
-        .first()
+async def login_user(data: LoginRequest) -> tuple[User, str, str]:
+    user = await User.find_one(
+        User.email == data.email,
+        User.deleted_at == None,  # noqa: E711
     )
 
     if not user or not user.password_hash or not user.password_salt:
@@ -148,18 +156,20 @@ def login_user(db: Session, data: LoginRequest) -> tuple[User, str, str]:
             detail="Invalid email or password",
         )
 
+    user_id = str(user.id)
+
     token_payload = {
-        "sub": str(user.id),
+        "sub": user_id,
         "email": user.email,
     }
 
     access_token = create_access_token(token_payload)
     refresh_token = create_refresh_token(token_payload)
 
-    save_access_jti(user.id, access_token)
+    save_access_jti(user_id, access_token)
 
     access_token_record = AuthToken(
-        user_id=user.id,
+        user_id=user_id,
         token_hash=hash_token(access_token),
         token_type="access",
         expires_at=datetime.utcnow()
@@ -168,7 +178,7 @@ def login_user(db: Session, data: LoginRequest) -> tuple[User, str, str]:
     )
 
     refresh_token_record = AuthToken(
-        user_id=user.id,
+        user_id=user_id,
         token_hash=hash_token(refresh_token),
         token_type="refresh",
         expires_at=datetime.utcnow()
@@ -176,13 +186,13 @@ def login_user(db: Session, data: LoginRequest) -> tuple[User, str, str]:
         revoked=False,
     )
 
-    db.add(access_token_record)
-    db.add(refresh_token_record)
-    db.commit()
+    await access_token_record.insert()
+    await refresh_token_record.insert()
 
     return user, access_token, refresh_token
 
-def refresh_user_tokens(db: Session, refresh_token: str | None) -> tuple[User, str, str]:
+
+async def refresh_user_tokens(refresh_token: str | None) -> tuple[User, str, str]:
     if not refresh_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -206,13 +216,11 @@ def refresh_user_tokens(db: Session, refresh_token: str | None) -> tuple[User, s
             detail="Invalid refresh token",
         )
 
-    old_refresh_record = (
-        db.query(AuthToken)
-        .filter(AuthToken.token_hash == hash_token(refresh_token))
-        .filter(AuthToken.token_type == "refresh")
-        .filter(AuthToken.revoked.is_(False))
-        .filter(AuthToken.expires_at > datetime.utcnow())
-        .first()
+    old_refresh_record = await AuthToken.find_one(
+        AuthToken.token_hash == hash_token(refresh_token),
+        AuthToken.token_type == "refresh",
+        AuthToken.revoked == False,  # noqa: E712
+        AuthToken.expires_at > datetime.utcnow(),
     )
 
     if not old_refresh_record:
@@ -221,11 +229,16 @@ def refresh_user_tokens(db: Session, refresh_token: str | None) -> tuple[User, s
             detail="Refresh token was revoked or expired",
         )
 
-    user = (
-        db.query(User)
-        .filter(User.id == int(user_id))
-        .filter(User.deleted_at.is_(None))
-        .first()
+    object_id = normalize_user_id(user_id)
+    if object_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid user id",
+        )
+
+    user = await User.find_one(
+        User.id == object_id,
+        User.deleted_at == None,  # noqa: E711
     )
 
     if not user:
@@ -234,22 +247,26 @@ def refresh_user_tokens(db: Session, refresh_token: str | None) -> tuple[User, s
             detail="User not found",
         )
 
-    db.query(AuthToken).filter(AuthToken.user_id == user.id).filter(
-        AuthToken.revoked.is_(False)
-    ).update({"revoked": True})
+    await AuthToken.find(
+        AuthToken.user_id == user_id,
+        AuthToken.revoked == False,  # noqa: E712
+    ).update({"$set": {"revoked": True}})
+
+    delete_all_user_access_jti(user_id)
+    delete_user_profile_cache(user_id)
 
     token_payload = {
-        "sub": str(user.id),
+        "sub": user_id,
         "email": user.email,
     }
 
     new_access_token = create_access_token(token_payload)
     new_refresh_token = create_refresh_token(token_payload)
 
-    save_access_jti(user.id, new_access_token)
+    save_access_jti(user_id, new_access_token)
 
     access_token_record = AuthToken(
-        user_id=user.id,
+        user_id=user_id,
         token_hash=hash_token(new_access_token),
         token_type="access",
         expires_at=datetime.utcnow()
@@ -258,7 +275,7 @@ def refresh_user_tokens(db: Session, refresh_token: str | None) -> tuple[User, s
     )
 
     refresh_token_record = AuthToken(
-        user_id=user.id,
+        user_id=user_id,
         token_hash=hash_token(new_refresh_token),
         token_type="refresh",
         expires_at=datetime.utcnow()
@@ -266,14 +283,13 @@ def refresh_user_tokens(db: Session, refresh_token: str | None) -> tuple[User, s
         revoked=False,
     )
 
-    db.add(access_token_record)
-    db.add(refresh_token_record)
-    db.commit()
+    await access_token_record.insert()
+    await refresh_token_record.insert()
 
     return user, new_access_token, new_refresh_token
 
-def logout_current_session(
-    db: Session,
+
+async def logout_current_session(
     access_token: str | None,
     refresh_token: str | None,
 ) -> None:
@@ -285,37 +301,34 @@ def logout_current_session(
         delete_user_profile_cache(user_id)
 
     if access_token:
-        db.query(AuthToken).filter(
+        await AuthToken.find(
             AuthToken.token_hash == hash_token(access_token),
-            AuthToken.revoked.is_(False),
-        ).update({"revoked": True})
+            AuthToken.revoked == False,  # noqa: E712
+        ).update({"$set": {"revoked": True}})
 
     if refresh_token:
-        db.query(AuthToken).filter(
+        await AuthToken.find(
             AuthToken.token_hash == hash_token(refresh_token),
-            AuthToken.revoked.is_(False),
-        ).update({"revoked": True})
-
-    db.commit()
+            AuthToken.revoked == False,  # noqa: E712
+        ).update({"$set": {"revoked": True}})
 
 
-def logout_all_sessions(db: Session, user: User) -> None:
-    delete_all_user_access_jti(user.id)
-    delete_user_profile_cache(user.id)
+async def logout_all_sessions(user: User) -> None:
+    user_id = str(user.id)
 
-    db.query(AuthToken).filter(
-        AuthToken.user_id == user.id,
-        AuthToken.revoked.is_(False),
-    ).update({"revoked": True})
+    delete_all_user_access_jti(user_id)
+    delete_user_profile_cache(user_id)
 
-    db.commit()
+    await AuthToken.find(
+        AuthToken.user_id == user_id,
+        AuthToken.revoked == False,  # noqa: E712
+    ).update({"$set": {"revoked": True}})
 
-def forgot_password(db: Session, email: str) -> str:
-    user = (
-        db.query(User)
-        .filter(User.email == email)
-        .filter(User.deleted_at.is_(None))
-        .first()
+
+async def forgot_password(email: str) -> str:
+    user = await User.find_one(
+        User.email == email,
+        User.deleted_at == None,  # noqa: E711
     )
 
     if not user:
@@ -327,25 +340,22 @@ def forgot_password(db: Session, email: str) -> str:
     reset_token = uuid4().hex
 
     token_record = PasswordResetToken(
-        user_id=user.id,
+        user_id=str(user.id),
         token_hash=hash_token(reset_token),
         expires_at=datetime.utcnow() + timedelta(minutes=30),
         used=False,
     )
 
-    db.add(token_record)
-    db.commit()
+    await token_record.insert()
 
     return reset_token
 
 
-def reset_password(db: Session, token: str, new_password: str) -> None:
-    token_record = (
-        db.query(PasswordResetToken)
-        .filter(PasswordResetToken.token_hash == hash_token(token))
-        .filter(PasswordResetToken.used.is_(False))
-        .filter(PasswordResetToken.expires_at > datetime.utcnow())
-        .first()
+async def reset_password(token: str, new_password: str) -> None:
+    token_record = await PasswordResetToken.find_one(
+        PasswordResetToken.token_hash == hash_token(token),
+        PasswordResetToken.used == False,  # noqa: E712
+        PasswordResetToken.expires_at > datetime.utcnow(),
     )
 
     if not token_record:
@@ -354,11 +364,16 @@ def reset_password(db: Session, token: str, new_password: str) -> None:
             detail="Invalid or expired password reset token",
         )
 
-    user = (
-        db.query(User)
-        .filter(User.id == token_record.user_id)
-        .filter(User.deleted_at.is_(None))
-        .first()
+    object_id = normalize_user_id(token_record.user_id)
+    if object_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    user = await User.find_one(
+        User.id == object_id,
+        User.deleted_at == None,  # noqa: E711
     )
 
     if not user:
@@ -372,12 +387,17 @@ def reset_password(db: Session, token: str, new_password: str) -> None:
 
     user.password_salt = salt
     user.password_hash = password_hash
+    user.updated_at = datetime.utcnow()
 
     token_record.used = True
 
-    db.query(AuthToken).filter(
-        AuthToken.user_id == user.id,
-        AuthToken.revoked.is_(False),
-    ).update({"revoked": True})
+    await user.save()
+    await token_record.save()
 
-    db.commit()
+    await AuthToken.find(
+        AuthToken.user_id == str(user.id),
+        AuthToken.revoked == False,  # noqa: E712
+    ).update({"$set": {"revoked": True}})
+
+    delete_all_user_access_jti(str(user.id))
+    delete_user_profile_cache(str(user.id))

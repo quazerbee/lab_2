@@ -18,7 +18,10 @@ class ItemCreate(BaseModel):
 class ItemUpdate(BaseModel):
     name: Optional[str] = Field(
         default=None,
-        description="Новое название item. Поле необязательное, так как PATCH обновляет только переданные значения.",
+        description=(
+            "Новое название item. Поле необязательное, "
+            "так как PATCH обновляет только переданные значения."
+        ),
         examples=["Обновлённый ноутбук"],
     )
     description: Optional[str] = Field(
@@ -29,15 +32,15 @@ class ItemUpdate(BaseModel):
 
 
 class ItemResponse(BaseModel):
-    id: int = Field(
+    id: str = Field(
         ...,
-        description="Уникальный идентификатор item",
-        examples=[1],
+        description="Уникальный идентификатор item в MongoDB",
+        examples=["665f1b0f8e4b4c7a8f123456"],
     )
-    owner_id: Optional[int] = Field(
+    owner_id: Optional[str] = Field(
         default=None,
         description="ID пользователя, которому принадлежит item",
-        examples=[1],
+        examples=["665f1b0f8e4b4c7a8f654321"],
     )
     name: str = Field(
         ...,

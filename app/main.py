@@ -1,10 +1,11 @@
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 
-from app.database import engine
+from app.database import init_db, check_db_connection
 from app.routers.item_router import router as item_router
 from app.auth.router import router as auth_router
 
@@ -22,10 +23,16 @@ if not is_production:
     }
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db()
+    yield
+
+
 app = FastAPI(
     title="Lab Project API",
-    description="Документация API для лабораторных работ №2-№4",
-    version="1.0.0",
+    description="Документация API для лабораторной работы №6: MongoDB вместо PostgreSQL",
+    version="6.0.0",
     docs_url=None if is_production else "/api/docs",
     redoc_url=None if is_production else "/redoc",
     openapi_url=None if is_production else "/openapi.json",
@@ -33,6 +40,7 @@ app = FastAPI(
     if is_production
     else "/api/docs/oauth2-redirect",
     swagger_ui_init_oauth=swagger_oauth_settings,
+    lifespan=lifespan,
 )
 
 app.include_router(item_router)
@@ -90,7 +98,7 @@ app.openapi = custom_openapi
     summary="Проверка работы API",
     description="Возвращает сообщение о том, что API запущен и работает.",
 )
-def root():
+async def root():
     return {"message": "API is working"}
 
 
@@ -98,7 +106,7 @@ def root():
     "/db-check",
     tags=["System"],
     summary="Проверка подключения к базе данных",
-    description="Проверяет, доступна ли база данных PostgreSQL.",
+    description="Проверяет, доступна ли база данных MongoDB.",
     responses={
         200: {
             "description": "Результат проверки подключения к базе данных",
@@ -107,11 +115,11 @@ def root():
                     "examples": {
                         "success": {
                             "summary": "Успешное подключение",
-                            "value": {"message": "DB connected!"},
+                            "value": {"message": "MongoDB connected!"},
                         },
                         "error": {
                             "summary": "Ошибка подключения",
-                            "value": {"message": "DB connection failed"},
+                            "value": {"message": "MongoDB connection failed"},
                         },
                     }
                 }
@@ -119,13 +127,13 @@ def root():
         }
     },
 )
-def check_db():
-    try:
-        connection = engine.connect()
-        connection.close()
-        return {"message": "DB connected!"}
-    except Exception:
-        return {"message": "DB connection failed"}
+async def check_db():
+    is_connected = await check_db_connection()
+
+    if is_connected:
+        return {"message": "MongoDB connected!"}
+
+    return {"message": "MongoDB connection failed"}
 
 
 @app.exception_handler(Exception)

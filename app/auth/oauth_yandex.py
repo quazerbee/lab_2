@@ -1,9 +1,9 @@
+from datetime import datetime
 from urllib.parse import urlencode
 from uuid import uuid4
 
 import httpx
 from fastapi import HTTPException, status
-from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.user import User
@@ -19,7 +19,10 @@ def generate_oauth_state() -> str:
 
 
 def build_yandex_auth_url(state: str) -> str:
-    if not settings.YANDEX_CLIENT_ID or settings.YANDEX_CLIENT_ID == "your_yandex_client_id":
+    if (
+        not settings.YANDEX_CLIENT_ID
+        or settings.YANDEX_CLIENT_ID == "your_yandex_client_id"
+    ):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Yandex OAuth client id is not configured",
@@ -91,7 +94,7 @@ async def get_yandex_user_info(access_token: str) -> dict:
     return response.json()
 
 
-def find_or_create_yandex_user(db: Session, user_info: dict) -> User:
+async def find_or_create_yandex_user(user_info: dict) -> User:
     yandex_id = str(user_info.get("id") or "")
     email = user_info.get("default_email")
 
@@ -101,18 +104,18 @@ def find_or_create_yandex_user(db: Session, user_info: dict) -> User:
             detail="Yandex user id was not returned",
         )
 
-    user = db.query(User).filter(User.yandex_id == yandex_id).first()
+    user = await User.find_one(User.yandex_id == yandex_id)
 
     if user:
         return user
 
     if email:
-        user = db.query(User).filter(User.email == email).first()
+        user = await User.find_one(User.email == email)
 
         if user:
             user.yandex_id = yandex_id
-            db.commit()
-            db.refresh(user)
+            user.updated_at = datetime.utcnow()
+            await user.save()
             return user
 
     if not email:
@@ -125,8 +128,6 @@ def find_or_create_yandex_user(db: Session, user_info: dict) -> User:
         password_salt=None,
     )
 
-    db.add(user)
-    db.commit()
-    db.refresh(user)
+    await user.insert()
 
     return user

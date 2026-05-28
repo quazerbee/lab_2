@@ -1,29 +1,24 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String
-from sqlalchemy.orm import relationship
+from beanie import Document, Indexed
+from pydantic import Field
+from pymongo import IndexModel
 
-from app.database import Base
 
+class PasswordResetToken(Document):
+    user_id: str = Field(...)
 
-class PasswordResetToken(Base):
-    __tablename__ = "password_reset_tokens"
+    token_hash: Indexed(str)
 
-    id = Column(Integer, primary_key=True, index=True)
+    expires_at: datetime
+    used: bool = False
 
-    user_id = Column(
-        Integer,
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
-    token_hash = Column(String, nullable=False, index=True)
-
-    expires_at = Column(DateTime, nullable=False)
-
-    used = Column(Boolean, default=False, nullable=False)
-
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-
-    user = relationship("User")
+    class Settings:
+        name = "password_reset_tokens"
+        indexes = [
+            IndexModel([("user_id", 1)]),
+            IndexModel([("token_hash", 1)]),
+            IndexModel([("expires_at", 1)]),
+        ]

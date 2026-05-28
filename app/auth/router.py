@@ -1,17 +1,19 @@
+from datetime import datetime, timedelta
+
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy.orm import Session
 
 from app.auth.dependencies import get_current_user
 from app.auth.service import (
+    forgot_password,
+    get_cached_user_profile,
     login_user,
     logout_all_sessions,
     logout_current_session,
     refresh_user_tokens,
     register_user,
-    forgot_password,
     reset_password,
-    get_cached_user_profile,
+    save_access_jti,
 )
 from app.auth.oauth_yandex import (
     build_yandex_auth_url,
@@ -20,8 +22,9 @@ from app.auth.oauth_yandex import (
     generate_oauth_state,
     get_yandex_user_info,
 )
+from app.auth.security import create_access_token, create_refresh_token, hash_token
 from app.config import settings
-from app.database import get_db
+from app.models.auth_token import AuthToken
 from app.models.user import User
 from app.schemas.auth import (
     AuthResponse,
@@ -32,9 +35,6 @@ from app.schemas.auth import (
     RegisterRequest,
     ResetPasswordRequest,
 )
-from app.auth.security import create_access_token, create_refresh_token, hash_token
-from datetime import datetime, timedelta
-from app.models.auth_token import AuthToken
 
 router = APIRouter(
     prefix="/auth",
@@ -56,7 +56,7 @@ router = APIRouter(
                     "example": {
                         "message": "User registered successfully",
                         "user": {
-                            "id": 1,
+                            "id": "665f1b0f8e4b4c7a8f654321",
                             "email": "user@example.com",
                         },
                     }
@@ -75,14 +75,14 @@ router = APIRouter(
             "description": "Пользователь с таким email уже существует",
             "content": {
                 "application/json": {
-                    "example": {"detail": "User already exists"}
+                    "example": {"detail": "User with this email already exists"}
                 }
             },
         },
     },
 )
-def register(data: RegisterRequest, db: Session = Depends(get_db)):
-    user = register_user(db, data)
+async def register(data: RegisterRequest):
+    user = await register_user(data)
 
     return {
         "message": "User registered successfully",
@@ -104,7 +104,7 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
                     "example": {
                         "message": "User logged in successfully",
                         "user": {
-                            "id": 1,
+                            "id": "665f1b0f8e4b4c7a8f654321",
                             "email": "user@example.com",
                         },
                     }
@@ -123,18 +123,17 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
             "description": "Неверный email или пароль",
             "content": {
                 "application/json": {
-                    "example": {"detail": "Invalid credentials"}
+                    "example": {"detail": "Invalid email or password"}
                 }
             },
         },
     },
 )
-def login(
+async def login(
     data: LoginRequest,
     response: Response,
-    db: Session = Depends(get_db),
 ):
-    user, access_token, refresh_token = login_user(db, data)
+    user, access_token, refresh_token = await login_user(data)
 
     response.set_cookie(
         key="access_token",
@@ -174,7 +173,7 @@ def login(
                     "example": {
                         "message": "User is authenticated",
                         "user": {
-                            "id": 1,
+                            "id": "665f1b0f8e4b4c7a8f654321",
                             "email": "user@example.com",
                         },
                     }
@@ -191,7 +190,7 @@ def login(
         },
     },
 )
-def whoami(current_user: User = Depends(get_current_user)):
+async def whoami(current_user: User = Depends(get_current_user)):
     get_cached_user_profile(current_user)
 
     return {
@@ -214,7 +213,7 @@ def whoami(current_user: User = Depends(get_current_user)):
                     "example": {
                         "message": "Tokens refreshed successfully",
                         "user": {
-                            "id": 1,
+                            "id": "665f1b0f8e4b4c7a8f654321",
                             "email": "user@example.com",
                         },
                     }
@@ -225,19 +224,17 @@ def whoami(current_user: User = Depends(get_current_user)):
             "description": "Refresh token отсутствует, истёк или недействителен",
             "content": {
                 "application/json": {
-                    "example": {"detail": "Invalid refresh token"}
+                    "example": {"detail": "Invalid or expired refresh token"}
                 }
             },
         },
     },
 )
-def refresh(
+async def refresh(
     response: Response,
     refresh_token: str | None = Cookie(default=None),
-    db: Session = Depends(get_db),
 ):
-    user, new_access_token, new_refresh_token = refresh_user_tokens(
-        db=db,
+    user, new_access_token, new_refresh_token = await refresh_user_tokens(
         refresh_token=refresh_token,
     )
 
@@ -292,14 +289,12 @@ def refresh(
         },
     },
 )
-def logout(
+async def logout(
     response: Response,
     access_token: str | None = Cookie(default=None),
     refresh_token: str | None = Cookie(default=None),
-    db: Session = Depends(get_db),
 ):
-    logout_current_session(
-        db=db,
+    await logout_current_session(
         access_token=access_token,
         refresh_token=refresh_token,
     )
@@ -339,12 +334,11 @@ def logout(
         },
     },
 )
-def logout_all(
+async def logout_all(
     response: Response,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
-    logout_all_sessions(db=db, user=current_user)
+    await logout_all_sessions(user=current_user)
 
     response.delete_cookie(key="access_token")
     response.delete_cookie(key="refresh_token")
@@ -352,6 +346,7 @@ def logout_all(
     return {
         "message": "Logged out from all sessions successfully",
     }
+
 
 @router.get(
     "/oauth/yandex",
@@ -404,7 +399,6 @@ async def yandex_oauth_callback(
     request: Request,
     code: str,
     state: str,
-    db: Session = Depends(get_db),
 ):
     saved_state = request.cookies.get("oauth_state")
 
@@ -417,18 +411,22 @@ async def yandex_oauth_callback(
     yandex_access_token = await exchange_code_for_token(code)
     yandex_user_info = await get_yandex_user_info(yandex_access_token)
 
-    user = find_or_create_yandex_user(db, yandex_user_info)
+    user = await find_or_create_yandex_user(yandex_user_info)
+
+    user_id = str(user.id)
 
     token_payload = {
-        "sub": str(user.id),
+        "sub": user_id,
         "email": user.email,
     }
 
     access_token = create_access_token(token_payload)
     refresh_token = create_refresh_token(token_payload)
 
+    save_access_jti(user_id, access_token)
+
     access_token_record = AuthToken(
-        user_id=user.id,
+        user_id=user_id,
         token_hash=hash_token(access_token),
         token_type="access",
         expires_at=datetime.utcnow()
@@ -437,7 +435,7 @@ async def yandex_oauth_callback(
     )
 
     refresh_token_record = AuthToken(
-        user_id=user.id,
+        user_id=user_id,
         token_hash=hash_token(refresh_token),
         token_type="refresh",
         expires_at=datetime.utcnow()
@@ -445,9 +443,8 @@ async def yandex_oauth_callback(
         revoked=False,
     )
 
-    db.add(access_token_record)
-    db.add(refresh_token_record)
-    db.commit()
+    await access_token_record.insert()
+    await refresh_token_record.insert()
 
     response = RedirectResponse(url=settings.CLIENT_URL)
     response.delete_cookie(key="oauth_state")
@@ -472,6 +469,7 @@ async def yandex_oauth_callback(
 
     return response
 
+
 @router.post(
     "/forgot-password",
     response_model=ForgotPasswordResponse,
@@ -494,17 +492,14 @@ async def yandex_oauth_callback(
             "description": "Пользователь с таким email не найден",
             "content": {
                 "application/json": {
-                    "example": {"detail": "User not found"}
+                    "example": {"detail": "User with this email not found"}
                 }
             },
         },
     },
 )
-def forgot_password_endpoint(
-    data: ForgotPasswordRequest,
-    db: Session = Depends(get_db),
-):
-    reset_token = forgot_password(db=db, email=data.email)
+async def forgot_password_endpoint(data: ForgotPasswordRequest):
+    reset_token = await forgot_password(email=data.email)
 
     return {
         "message": "Password reset token generated successfully",
@@ -533,18 +528,14 @@ def forgot_password_endpoint(
             "description": "Некорректный или истёкший токен сброса пароля",
             "content": {
                 "application/json": {
-                    "example": {"detail": "Invalid or expired reset token"}
+                    "example": {"detail": "Invalid or expired password reset token"}
                 }
             },
         },
     },
 )
-def reset_password_endpoint(
-    data: ResetPasswordRequest,
-    db: Session = Depends(get_db),
-):
-    reset_password(
-        db=db,
+async def reset_password_endpoint(data: ResetPasswordRequest):
+    await reset_password(
         token=data.token,
         new_password=data.new_password,
     )

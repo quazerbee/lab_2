@@ -1,14 +1,25 @@
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy.orm import Session
+from bson import ObjectId
 
 from app.cache.cache_service import cache_service
 from app.models.item import Item
 
 
-def item_to_dict(item: Item) -> dict:
+def normalize_item_id(item_id: str) -> ObjectId | None:
+    if not ObjectId.is_valid(item_id):
+        return None
+
+    return ObjectId(item_id)
+
+
+def item_to_dict(item: Item | dict[str, Any]) -> dict:
+    if isinstance(item, dict):
+        return item
+
     return {
-        "id": item.id,
+        "id": str(item.id),
         "name": item.name,
         "description": item.description,
         "owner_id": item.owner_id,
@@ -18,19 +29,19 @@ def item_to_dict(item: Item) -> dict:
     }
 
 
-def invalidate_items_cache(owner_id: int, item_id: int | None = None) -> None:
+def invalidate_items_cache(owner_id: str, item_id: str | None = None) -> None:
     cache_service.delete_by_pattern(f"wp:items:list:user:{owner_id}:*")
 
     if item_id is not None:
         cache_service.delete(f"wp:items:item:{item_id}")
 
 
-def create_item(db: Session, name: str, description: str | None, owner_id: int):
-    existing = db.query(Item).filter(
+async def create_item(name: str, description: str | None, owner_id: str):
+    existing = await Item.find_one(
         Item.name == name,
         Item.owner_id == owner_id,
-        Item.deleted_at.is_(None),
-    ).first()
+        Item.deleted_at == None,  # noqa: E711
+    )
 
     if existing:
         return None
@@ -41,29 +52,27 @@ def create_item(db: Session, name: str, description: str | None, owner_id: int):
         owner_id=owner_id,
     )
 
-    db.add(item)
-    db.commit()
-    db.refresh(item)
+    await item.insert()
 
     invalidate_items_cache(owner_id)
 
-    return item
+    return item_to_dict(item)
 
 
-def get_items(db: Session, owner_id: int, limit: int = 10, offset: int = 0):
+async def get_items(owner_id: str, limit: int = 10, offset: int = 0):
     cache_key = f"wp:items:list:user:{owner_id}:limit:{limit}:offset:{offset}"
 
     cached_data = cache_service.get(cache_key)
     if cached_data is not None:
         return cached_data["items"], cached_data["total"]
 
-    query = db.query(Item).filter(
+    query = Item.find(
         Item.owner_id == owner_id,
-        Item.deleted_at.is_(None),
+        Item.deleted_at == None,  # noqa: E711
     )
 
-    total = query.count()
-    items = query.offset(offset).limit(limit).all()
+    total = await query.count()
+    items = await query.skip(offset).limit(limit).to_list()
 
     items_as_dicts = [item_to_dict(item) for item in items]
 
@@ -75,57 +84,72 @@ def get_items(db: Session, owner_id: int, limit: int = 10, offset: int = 0):
         },
     )
 
-    return items, total
+    return items_as_dicts, total
 
 
-def get_item_by_id(db: Session, item_id: int):
+async def get_item_by_id(item_id: str):
     cache_key = f"wp:items:item:{item_id}"
 
     cached_item = cache_service.get(cache_key)
     if cached_item is not None:
         return cached_item
 
-    item = db.query(Item).filter(
-        Item.id == item_id,
-        Item.deleted_at.is_(None),
-    ).first()
+    object_id = normalize_item_id(item_id)
+    if object_id is None:
+        return None
+
+    item = await Item.find_one(
+        Item.id == object_id,
+        Item.deleted_at == None,  # noqa: E711
+    )
 
     if item:
-        cache_service.set(cache_key, item_to_dict(item))
+        item_data = item_to_dict(item)
+        cache_service.set(cache_key, item_data)
+        return item_data
 
-    return item
+    return None
 
 
-def delete_item(db: Session, item_id: int, owner_id: int):
-    item = db.query(Item).filter(
-        Item.id == item_id,
+async def delete_item(item_id: str, owner_id: str):
+    object_id = normalize_item_id(item_id)
+    if object_id is None:
+        return None
+
+    item = await Item.find_one(
+        Item.id == object_id,
         Item.owner_id == owner_id,
-        Item.deleted_at.is_(None),
-    ).first()
+        Item.deleted_at == None,  # noqa: E711
+    )
 
     if not item:
         return None
 
     item.deleted_at = datetime.utcnow()
-    db.commit()
+    item.updated_at = datetime.utcnow()
+
+    await item.save()
 
     invalidate_items_cache(owner_id, item_id)
 
-    return item
+    return item_to_dict(item)
 
 
-def update_item(
-    db: Session,
-    item_id: int,
-    owner_id: int,
+async def update_item(
+    item_id: str,
+    owner_id: str,
     name: str,
     description: str | None,
 ):
-    item = db.query(Item).filter(
-        Item.id == item_id,
+    object_id = normalize_item_id(item_id)
+    if object_id is None:
+        return None
+
+    item = await Item.find_one(
+        Item.id == object_id,
         Item.owner_id == owner_id,
-        Item.deleted_at.is_(None),
-    ).first()
+        Item.deleted_at == None,  # noqa: E711
+    )
 
     if not item:
         return None
@@ -134,26 +158,28 @@ def update_item(
     item.description = description
     item.updated_at = datetime.utcnow()
 
-    db.commit()
-    db.refresh(item)
+    await item.save()
 
     invalidate_items_cache(owner_id, item_id)
 
-    return item
+    return item_to_dict(item)
 
 
-def patch_item(
-    db: Session,
-    item_id: int,
-    owner_id: int,
+async def patch_item(
+    item_id: str,
+    owner_id: str,
     name: str | None = None,
     description: str | None = None,
 ):
-    item = db.query(Item).filter(
-        Item.id == item_id,
+    object_id = normalize_item_id(item_id)
+    if object_id is None:
+        return None
+
+    item = await Item.find_one(
+        Item.id == object_id,
         Item.owner_id == owner_id,
-        Item.deleted_at.is_(None),
-    ).first()
+        Item.deleted_at == None,  # noqa: E711
+    )
 
     if not item:
         return None
@@ -166,9 +192,8 @@ def patch_item(
 
     item.updated_at = datetime.utcnow()
 
-    db.commit()
-    db.refresh(item)
+    await item.save()
 
     invalidate_items_cache(owner_id, item_id)
 
-    return item
+    return item_to_dict(item)
