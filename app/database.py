@@ -1,8 +1,8 @@
 import os
 
 from beanie import init_beanie
-from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
+from pymongo import AsyncMongoClient
 
 from app.models.item import Item
 from app.models.user import User
@@ -14,7 +14,7 @@ load_dotenv()
 MONGO_URI = os.getenv("MONGO_URI")
 DB_NAME = os.getenv("DB_NAME", "lab_db")
 
-mongo_client: AsyncIOMotorClient | None = None
+mongo_client: AsyncMongoClient | None = None
 
 
 async def init_db() -> None:
@@ -23,7 +23,7 @@ async def init_db() -> None:
     if not MONGO_URI:
         raise RuntimeError("MONGO_URI is not set")
 
-    mongo_client = AsyncIOMotorClient(MONGO_URI)
+    mongo_client = AsyncMongoClient(MONGO_URI)
 
     await init_beanie(
         database=mongo_client[DB_NAME],

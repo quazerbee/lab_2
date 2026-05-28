@@ -25,7 +25,12 @@ def check_item_owner(item, current_user: User):
             detail="Item not found",
         )
 
-    if item.owner_id != str(current_user.id):
+    if isinstance(item, dict):
+        owner_id = item.get("owner_id")
+    else:
+        owner_id = item.owner_id
+
+    if owner_id != str(current_user.id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to access this item",
