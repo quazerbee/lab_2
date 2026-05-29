@@ -1,184 +1,55 @@
-# Лабораторная работа №5
-
-## Кеширование данных и управление сессиями с использованием Redis
-
-Проект является продолжением лабораторных работ №2, №3 и №4.
-
-В рамках лабораторной работы №5 в существующее REST API на **FastAPI** добавлена интеграция с **Redis** для кеширования часто запрашиваемых данных и управления access-сессиями через хранение JTI access-токенов.
-
-Redis используется для:
-
-- кеширования списка пользовательских ресурсов `GET /items`;
-- кеширования профиля пользователя `GET /auth/whoami`;
-- хранения JTI access-токенов с TTL;
-- мгновенной инвалидации access-токена при logout;
-- инвалидации кеша при изменении данных.
-
----
-
-## Содержание
-
-- [Описание проекта](#описание-проекта)
-- [Стек технологий](#стек-технологий)
-- [Что реализовано в лабораторной №5](#что-реализовано-в-лабораторной-5)
-- [Структура проекта](#структура-проекта)
-- [Переменные окружения](#переменные-окружения)
-- [Запуск через Docker](#запуск-через-docker)
-- [Redis](#redis)
-- [Кеширование items](#кеширование-items)
-- [Инвалидация кеша items](#инвалидация-кеша-items)
-- [Кеширование профиля пользователя](#кеширование-профиля-пользователя)
-- [Управление access token через JTI](#управление-access-token-через-jti)
-- [Logout через Redis](#logout-через-redis)
-- [API endpoints](#api-endpoints)
-- [Проверка через Swagger UI](#проверка-через-swagger-ui)
-- [Проверка Redis через CLI](#проверка-redis-через-cli)
-- [Swagger / OpenAPI документация](#swagger--openapi-документация)
-- [Production-режим](#production-режим)
-- [Yandex OAuth](#yandex-oauth)
-- [Безопасность](#безопасность)
-- [Миграции базы данных](#миграции-базы-данных)
-- [Проверка данных в БД](#проверка-данных-в-бд)
-- [Контрольные вопросы](#контрольные-вопросы)
-- [Финальная проверка перед сдачей](#финальная-проверка-перед-сдачей)
-- [Автор](#автор)
-
----
+# Lab Project API — лабораторная работа №6
 
 ## Описание проекта
 
-REST API реализовано на **FastAPI** с использованием **PostgreSQL**, **SQLAlchemy**, **Alembic**, **Redis** и **Docker Compose**.
+Проект представляет собой REST API на FastAPI, разработанный в рамках лабораторных работ №2–№6.
 
-Проект наследует функциональность предыдущих лабораторных работ:
+В лабораторной работе №6 приложение было перенесено с PostgreSQL на MongoDB. При этом были сохранены механизмы из предыдущих лабораторных работ:
 
-- CRUD API для ресурса `items`;
-- пагинация;
-- Soft Delete;
-- регистрация пользователей;
-- вход по email и паролю;
-- JWT Access Token и Refresh Token;
-- передача токенов через `HttpOnly` cookies;
-- хранение хешей токенов в базе данных;
-- выход из текущей сессии;
-- выход из всех сессий;
-- OAuth-вход через **Yandex ID**;
-- восстановление пароля через reset token;
-- автоматическая документация API через OpenAPI / Swagger UI.
+* CRUD для сущности `Item`;
+* soft delete;
+* пагинация;
+* JWT-аутентификация;
+* refresh/logout/logout-all;
+* OAuth через Yandex ID;
+* кеширование через Redis;
+* Swagger-документация;
+* запуск через Docker Compose.
 
-В лабораторной работе №5 к проекту добавлен Redis.
-
-Основная идея работы:
-
-```text
-Client → FastAPI → Redis → PostgreSQL
-```
-
-Для часто читаемых данных приложение сначала проверяет Redis.
-
-Если данные есть в кеше, они возвращаются сразу.
-
-Если данных нет, приложение обращается к PostgreSQL, сохраняет результат в Redis и возвращает ответ клиенту.
-
----
+В качестве основной базы данных используется MongoDB. PostgreSQL в лабораторной работе №6 не используется.
 
 ## Стек технологий
 
-| Технология | Назначение |
-| --- | --- |
-| Python 3.11 | Язык программирования |
-| FastAPI | Web API framework |
-| PostgreSQL 16 | Основная база данных |
-| Redis 7 | Кеш и хранение JTI access-токенов |
-| SQLAlchemy | ORM |
-| Alembic | Миграции базы данных |
-| Pydantic | DTO, схемы данных и валидация |
-| Uvicorn | ASGI-сервер |
-| Docker / Docker Compose | Контейнеризация |
-| python-jose | Работа с JWT |
-| passlib / bcrypt | Хеширование паролей |
-| redis-py | Клиент Redis для Python |
-| httpx | HTTP-запросы к OAuth-провайдеру |
-| OpenAPI / Swagger UI | Документация API |
-| Yandex ID | OAuth 2.0 провайдер |
+* Python
+* FastAPI
+* MongoDB
+* Beanie ODM
+* PyMongo AsyncMongoClient
+* Redis
+* JWT
+* Yandex OAuth
+* Docker
+* Docker Compose
+* Swagger/OpenAPI
 
----
+## Запуск проекта
 
-## Что реализовано в лабораторной №5
+### 1. Клонировать репозиторий
 
-| Требование | Реализация |
-| --- | --- |
-| Redis добавлен в Docker Compose | ✅ Сервис `redis` на базе `redis:7-alpine` |
-| Redis защищен паролем | ✅ Используется `REDIS_PASSWORD` |
-| Настройки Redis вынесены в `.env` | ✅ `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `CACHE_TTL_DEFAULT` |
-| Отдельный слой кеширования | ✅ `app/cache/cache_service.py` |
-| Методы кеш-сервиса | ✅ `get`, `set`, `delete`, `delete_by_pattern` |
-| TTL для ключей | ✅ Все ключи создаются с временем жизни |
-| Кеширование `GET /items` | ✅ С учетом `owner_id`, `limit`, `offset` |
-| Инвалидация items-кеша | ✅ При `POST`, `PUT`, `PATCH`, `DELETE` |
-| Кеширование `GET /auth/whoami` | ✅ Профиль пользователя сохраняется в Redis |
-| Инвалидация профиля | ✅ При logout профиль удаляется из Redis |
-| JTI access-токена | ✅ Access token содержит уникальный `jti` |
-| Хранение JTI в Redis | ✅ `wp:auth:user:{user_id}:access:{jti}` |
-| Проверка JTI при авторизации | ✅ Если JTI удален из Redis, access token недействителен |
-| Logout через Redis | ✅ При logout JTI удаляется из Redis |
-| Безопасность данных | ✅ Пароли и полные токены не хранятся в Redis |
-
----
-
-## Структура проекта
-
-```text
-app/
-├── auth/
-│   ├── dependencies.py      # получение текущего пользователя и проверка access token + Redis JTI
-│   ├── oauth_yandex.py      # Yandex OAuth flow
-│   ├── router.py            # auth endpoints + OpenAPI metadata
-│   ├── security.py          # JWT, password hash, token hash, JTI
-│   └── service.py           # auth business logic + Redis JTI/profile cache
-│
-├── cache/
-│   ├── __init__.py
-│   └── cache_service.py     # общий сервис работы с Redis
-│
-├── models/
-│   ├── auth_token.py
-│   ├── item.py
-│   ├── password_reset_token.py
-│   └── user.py
-│
-├── routers/
-│   └── item_router.py       # items CRUD endpoints
-│
-├── schemas/
-│   ├── auth.py
-│   ├── item.py
-│   └── user.py
-│
-├── services/
-│   └── item_service.py      # бизнес-логика items + кеширование Redis
-│
-├── config.py
-├── database.py
-└── main.py
+```bash
+git clone <repository-url>
+cd lab_2
 ```
 
----
+### 2. Создать `.env` файл
 
-## Переменные окружения
-
-Создайте файл `.env` на основе `.env.example`.
+На основе `.env.example` создать файл `.env`:
 
 ```bash
 cp .env.example .env
 ```
 
-Для Windows PowerShell:
-
-```powershell
-copy .env.example .env
-```
-
-Пример `.env.example`:
+Пример `.env`:
 
 ```env
 APP_ENV=development
@@ -186,16 +57,15 @@ APP_ENV=development
 DB_USER=student
 DB_PASSWORD=student
 DB_NAME=lab_db
-DB_HOST=postgres
-DB_PORT=5432
+MONGO_URI=mongodb://student:student@mongo:27017/lab_db?authSource=admin
 
 REDIS_HOST=redis
 REDIS_PORT=6379
-REDIS_PASSWORD=change_me_redis_password
+REDIS_PASSWORD=redis_secure_password_change_me
 CACHE_TTL_DEFAULT=300
 
-JWT_ACCESS_SECRET=change_me_access_secret
-JWT_REFRESH_SECRET=change_me_refresh_secret
+JWT_ACCESS_SECRET=super_access_secret_key
+JWT_REFRESH_SECRET=super_refresh_secret_key
 JWT_ACCESS_EXPIRE_MINUTES=15
 JWT_REFRESH_EXPIRE_DAYS=7
 
@@ -205,523 +75,178 @@ YANDEX_CALLBACK_URL=http://localhost:8000/auth/oauth/yandex/callback
 CLIENT_URL=http://localhost:8000/api/docs
 ```
 
-> Файл `.env` не должен попадать в GitHub, так как содержит секреты, пароли и OAuth credentials.
-
----
-
-## Запуск через Docker
-
-### 1. Клонировать репозиторий
+### 3. Запустить приложение
 
 ```bash
-git clone https://github.com/quazerbee/lab_2.git
-cd lab_2
-git checkout lab5-redis
+docker compose up -d --build
 ```
 
-### 2. Создать `.env`
-
-```bash
-cp .env.example .env
-```
-
-Для Windows PowerShell:
-
-```powershell
-copy .env.example .env
-```
-
-### 3. Запустить контейнеры
-
-```bash
-docker compose up --build -d
-```
-
-### 4. Проверить контейнеры
-
-```bash
-docker compose ps
-```
-
-Должны быть запущены контейнеры:
+После запуска должны быть активны контейнеры:
 
 ```text
 lab_app
-lab_postgres
+lab_mongo
 lab_redis
 ```
 
-Пример успешного состояния:
-
-```text
-lab_postgres   Up   healthy
-lab_redis      Up   healthy
-lab_app        Up
-```
-
-### 5. Применить миграции
+Проверить статус контейнеров:
 
 ```bash
-docker exec -it lab_app python -m alembic upgrade head
+docker ps
 ```
 
-### 6. Проверить работу API
+## Проверка работы
 
-Откройте в браузере:
+### Проверка подключения к MongoDB
 
 ```text
-http://localhost:8000/
+GET /db-check
 ```
 
 Ожидаемый ответ:
 
 ```json
 {
-  "message": "API is working"
+  "message": "MongoDB connected!"
 }
 ```
 
----
+### Swagger UI
 
-## Redis
-
-В `docker-compose.yml` добавлен отдельный сервис Redis:
-
-```yaml
-redis:
-  image: redis:7-alpine
-  container_name: lab_redis
-  restart: always
-  ports:
-    - "6379:6379"
-  command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
-  volumes:
-    - redis_data:/data
-  healthcheck:
-    test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
-    interval: 10s
-    timeout: 5s
-    retries: 5
-```
-
-Redis используется как in-memory key-value хранилище.
-
-В проекте он применяется для:
-
-- кеширования списков `items`;
-- кеширования профиля пользователя;
-- хранения JTI access-токенов;
-- инвалидации сессий при logout.
-
-Все ключи имеют префикс `wp:`.
-
-Основные форматы ключей:
-
-```text
-wp:items:list:user:{user_id}:limit:{limit}:offset:{offset}
-wp:items:item:{item_id}
-wp:users:profile:{user_id}
-wp:auth:user:{user_id}:access:{jti}
-```
-
----
-
-## Кеширование items
-
-Для endpoint:
-
-```text
-GET /items?limit=10&offset=0
-```
-
-используется стратегия **Cache-Aside**.
-
-Логика работы:
-
-```text
-1. Пользователь вызывает GET /items.
-2. Приложение формирует Redis-ключ с user_id, limit и offset.
-3. Приложение проверяет наличие данных в Redis.
-4. Если данные есть, они возвращаются из кеша.
-5. Если данных нет, приложение делает запрос в PostgreSQL.
-6. Результат сохраняется в Redis с TTL.
-7. Ответ возвращается пользователю.
-```
-
-Пример ключа:
-
-```text
-wp:items:list:user:4:limit:10:offset:0
-```
-
-Параметры `limit` и `offset` включены в ключ, потому что разные страницы списка должны кешироваться отдельно.
-
-Примеры разных ключей:
-
-```text
-wp:items:list:user:4:limit:10:offset:0
-wp:items:list:user:4:limit:10:offset:10
-wp:items:list:user:4:limit:100:offset:0
-wp:items:list:user:4:limit:100:offset:10
-```
-
----
-
-## Инвалидация кеша items
-
-Кеш списка items удаляется при любых операциях записи:
-
-| Метод | URI | Действие с кешем |
-| --- | --- | --- |
-| GET | `/items` | Чтение из кеша или запись в кеш |
-| POST | `/items` | Удаление кеша списков пользователя |
-| PUT | `/items/{item_id}` | Удаление кеша списков и конкретного item |
-| PATCH | `/items/{item_id}` | Удаление кеша списков и конкретного item |
-| DELETE | `/items/{item_id}` | Удаление кеша списков и конкретного item |
-
-При изменении данных удаляются ключи по шаблону:
-
-```text
-wp:items:list:user:{user_id}:*
-```
-
-Это нужно, чтобы пользователь не получил устаревший список после создания, изменения или удаления ресурса.
-
----
-
-## Кеширование профиля пользователя
-
-Для endpoint:
-
-```text
-GET /auth/whoami
-```
-
-реализовано кеширование профиля пользователя.
-
-Ключ:
-
-```text
-wp:users:profile:{user_id}
-```
-
-Пример:
-
-```text
-wp:users:profile:4
-```
-
-В Redis сохраняются только безопасные данные:
-
-```json
-{
-  "id": 4,
-  "email": "user@example.com"
-}
-```
-
-В кеше не хранятся:
-
-- пароль;
-- хеш пароля;
-- соль пароля;
-- access token;
-- refresh token;
-- хеши токенов;
-- reset token.
-
-При logout кеш профиля удаляется.
-
----
-
-## Управление access token через JTI
-
-В access token добавлен уникальный идентификатор `jti`.
-
-Пример payload access-токена:
-
-```json
-{
-  "sub": "4",
-  "email": "user@example.com",
-  "type": "access",
-  "jti": "51bff96e70c7474ab6b2c3c44c7d57a5",
-  "exp": 1234567890
-}
-```
-
-После login JTI сохраняется в Redis:
-
-```text
-wp:auth:user:4:access:51bff96e70c7474ab6b2c3c44c7d57a5
-```
-
-Значение ключа:
-
-```text
-valid
-```
-
-TTL ключа равен времени жизни access token.
-
-Если `JWT_ACCESS_EXPIRE_MINUTES=15`, то TTL примерно равен:
-
-```text
-900 секунд
-```
-
-При каждом защищенном запросе приложение проверяет:
-
-```text
-1. Валидность JWT.
-2. Тип токена: access.
-3. Наличие sub.
-4. Наличие jti.
-5. Наличие соответствующего JTI-ключа в Redis.
-6. Наличие активного токена в PostgreSQL.
-```
-
-Если JTI отсутствует в Redis, access token считается отозванным.
-
----
-
-## Logout через Redis
-
-При logout выполняется:
-
-```text
-1. Access token декодируется.
-2. Из него извлекаются user_id и jti.
-3. Redis-ключ JTI удаляется.
-4. Кеш профиля пользователя удаляется.
-5. Хеши access/refresh токенов помечаются как revoked в PostgreSQL.
-6. Cookies access_token и refresh_token удаляются.
-```
-
-После logout старый access token больше не может использоваться, даже если срок его действия еще не истек.
-
-Это решает проблему stateless JWT: токен остается криптографически валидным, но становится недействительным на уровне Redis-сессии.
-
----
-
-## API endpoints
-
-### System endpoints
-
-| Метод | URI | Описание | Доступ |
-| --- | --- | --- | --- |
-| GET | `/` | Проверка работы API | Public |
-| GET | `/db-check` | Проверка подключения к БД | Public |
-
----
-
-### Auth endpoints
-
-| Метод | URI | Описание | Доступ |
-| --- | --- | --- | --- |
-| POST | `/auth/register` | Регистрация пользователя | Public |
-| POST | `/auth/login` | Логин, создание JTI в Redis и установка cookies | Public |
-| GET | `/auth/whoami` | Получение текущего пользователя и кеширование профиля | Private |
-| POST | `/auth/refresh` | Обновление access и refresh токенов | Public, нужен `refresh_token` cookie |
-| POST | `/auth/logout` | Выход из текущей сессии, удаление JTI и профиля из Redis | Private |
-| POST | `/auth/logout-all` | Выход со всех устройств | Private |
-| GET | `/auth/oauth/yandex` | Начало OAuth-авторизации через Yandex ID | Public |
-| GET | `/auth/oauth/yandex/callback` | Callback от Yandex ID | Public |
-| POST | `/auth/forgot-password` | Генерация reset token | Public |
-| POST | `/auth/reset-password` | Сброс пароля по reset token | Public |
-
----
-
-### Items endpoints
-
-Все `/items` endpoints требуют авторизацию через cookie `access_token`.
-
-| Метод | URI | Описание |
-| --- | --- | --- |
-| POST | `/items` | Создать item и инвалидировать кеш списков |
-| GET | `/items` | Получить список своих items с кешированием |
-| GET | `/items/{item_id}` | Получить свой item по ID |
-| PUT | `/items/{item_id}` | Полностью обновить item и инвалидировать кеш |
-| PATCH | `/items/{item_id}` | Частично обновить item и инвалидировать кеш |
-| DELETE | `/items/{item_id}` | Soft Delete item и инвалидировать кеш |
-
----
-
-## Проверка через Swagger UI
-
-Swagger UI доступен по адресу:
+Swagger-документация доступна по адресу:
 
 ```text
 http://localhost:8000/api/docs
 ```
 
----
+## API endpoints
 
-### 1. Регистрация
+### System
 
-Endpoint:
+| Метод | Endpoint    | Описание                       |
+| ----- | ----------- | ------------------------------ |
+| GET   | `/`         | Проверка работы API            |
+| GET   | `/db-check` | Проверка подключения к MongoDB |
 
-```text
-POST /auth/register
-```
+### Auth
 
-Request body:
+| Метод | Endpoint                      | Описание                              |
+| ----- | ----------------------------- | ------------------------------------- |
+| POST  | `/auth/register`              | Регистрация пользователя              |
+| POST  | `/auth/login`                 | Вход пользователя                     |
+| GET   | `/auth/whoami`                | Получение текущего пользователя       |
+| POST  | `/auth/refresh`               | Обновление access и refresh токенов   |
+| POST  | `/auth/logout`                | Выход из текущей сессии               |
+| POST  | `/auth/logout-all`            | Выход со всех устройств               |
+| GET   | `/auth/oauth/yandex`          | Начало OAuth-авторизации через Yandex |
+| GET   | `/auth/oauth/yandex/callback` | Callback для Yandex OAuth             |
+| POST  | `/auth/forgot-password`       | Генерация токена сброса пароля        |
+| POST  | `/auth/reset-password`        | Сброс пароля                          |
+
+### Items
+
+| Метод  | Endpoint           | Описание                            |
+| ------ | ------------------ | ----------------------------------- |
+| POST   | `/items`           | Создание item                       |
+| GET    | `/items`           | Получение списка items с пагинацией |
+| GET    | `/items/{item_id}` | Получение item по ID                |
+| PUT    | `/items/{item_id}` | Полное обновление item              |
+| PATCH  | `/items/{item_id}` | Частичное обновление item           |
+| DELETE | `/items/{item_id}` | Soft delete item                    |
+
+## Примеры запросов
+
+### Регистрация
 
 ```json
 {
   "email": "test@example.com",
-  "password": "Password123"
+  "password": "StrongPassword123"
 }
 ```
 
-Ожидаемый результат:
-
-```text
-201 Created
-```
-
----
-
-### 2. Логин
-
-Endpoint:
-
-```text
-POST /auth/login
-```
-
-Request body:
+### Логин
 
 ```json
 {
   "email": "test@example.com",
-  "password": "Password123"
+  "password": "StrongPassword123"
 }
 ```
 
-Ожидаемый результат:
-
-```text
-200 OK
-```
-
-После успешного входа backend устанавливает cookies:
-
-```text
-access_token
-refresh_token
-```
-
-Также в Redis появляется JTI access-токена:
-
-```text
-wp:auth:user:{user_id}:access:{jti}
-```
-
----
-
-### 3. Проверка текущего пользователя
-
-Endpoint:
-
-```text
-GET /auth/whoami
-```
-
-Ожидаемый результат:
-
-```text
-200 OK
-```
-
-После запроса в Redis появляется кеш профиля:
-
-```text
-wp:users:profile:{user_id}
-```
-
----
-
-### 4. Проверка кеширования items
-
-Создать item:
-
-```text
-POST /items
-```
-
-Request body:
+### Создание item
 
 ```json
 {
-  "name": "Ноутбук",
-  "description": "Рабочий ноутбук для разработки"
+  "name": "Redis test item",
+  "description": "Проверка кеширования Redis"
 }
 ```
 
-Получить список:
+### Обновление item через PATCH
 
-```text
-GET /items?limit=10&offset=0
+```json
+{
+  "name": "Redis updated item",
+  "description": "Кеш должен сброситься"
+}
 ```
 
-После запроса в Redis появляется ключ:
+## MongoDB
 
-```text
-wp:items:list:user:{user_id}:limit:10:offset:0
+MongoDB запускается в Docker Compose как сервис `mongo`.
+
+Подключение из приложения выполняется через переменную окружения:
+
+```env
+MONGO_URI=mongodb://student:student@mongo:27017/lab_db?authSource=admin
 ```
 
----
-
-### 5. Проверка инвалидации items
-
-После того как кеш списка создан, выполнить:
+Для подключения через MongoDB Compass можно использовать:
 
 ```text
-POST /items
+mongodb://student:student@localhost:27017/lab_db?authSource=admin
 ```
 
-или:
+Основные коллекции:
 
 ```text
-PUT /items/{item_id}
-PATCH /items/{item_id}
-DELETE /items/{item_id}
+users
+items
+auth_tokens
+password_reset_tokens
 ```
 
-После этого кеш списков пользователя должен быть удален.
+В MongoDB используются стандартные `_id` типа `ObjectId`.
 
----
+## Soft Delete
 
-### 6. Проверка logout
-
-Endpoint:
+Физическое удаление документов не выполняется. При удалении item заполняется поле:
 
 ```text
-POST /auth/logout
+deleted_at
 ```
 
-После logout:
+Обычные запросы на получение данных фильтруют удалённые документы и не возвращают записи, у которых `deleted_at` не равен `null`.
 
-- cookies удаляются;
-- JTI access-токена удаляется из Redis;
-- кеш профиля пользователя удаляется из Redis;
-- повторный запрос `GET /auth/whoami` возвращает `401 Unauthorized`.
+Пример проверки:
 
----
+1. Создать item через `POST /items`.
+2. Удалить item через `DELETE /items/{item_id}`.
+3. Выполнить `GET /items`.
+4. Удалённый item не должен возвращаться в списке.
 
-## Проверка Redis через CLI
+## Redis
 
-Подключиться к Redis CLI:
+Redis используется для:
+
+1. хранения активных access-токенов;
+2. кеширования списка items.
+
+Проверка Redis:
 
 ```bash
-docker exec -it lab_redis redis-cli -a redis_secure_password_change_me
-```
-
-Проверить соединение:
-
-```redis
-PING
+docker exec -it lab_redis redis-cli -a redis_secure_password_change_me ping
 ```
 
 Ожидаемый ответ:
@@ -730,610 +255,246 @@ PING
 PONG
 ```
 
----
-
-### Просмотр всех ключей проекта
-
-```redis
-KEYS wp:*
-```
-
----
-
-### Проверка кеша items
-
-```redis
-KEYS wp:items:*
-```
-
-Пример результата:
+После логина появляется ключ access-токена:
 
 ```text
-1) "wp:items:list:user:4:limit:10:offset:0"
+wp:auth:user:<user_id>:access:<jti>
 ```
 
-Проверить TTL:
-
-```redis
-TTL wp:items:list:user:4:limit:10:offset:0
-```
-
-Пример результата:
+После запроса `GET /items` появляется ключ кеша:
 
 ```text
-(integer) 176
+wp:items:list:user:<user_id>:limit:10:offset:0
 ```
 
-Получить значение:
+При изменении или удалении item кеш списка инвалидируется. После повторного `GET /items` кеш создаётся заново.
 
-```redis
-GET wp:items:list:user:4:limit:10:offset:0
+## Отличие PostgreSQL и MongoDB в проекте
+
+В предыдущих лабораторных работах приложение использовало PostgreSQL и SQLAlchemy. В лабораторной работе №6 слой персистентности был заменён на MongoDB и Beanie ODM.
+
+Основные изменения:
+
+* вместо таблиц используются коллекции MongoDB;
+* вместо строк таблиц используются документы;
+* вместо integer ID используются `ObjectId`;
+* вместо SQLAlchemy `Session` используются асинхронные методы Beanie;
+* запросы стали асинхронными;
+* связи между сущностями хранятся через строковые `owner_id` / `user_id`;
+* soft delete реализован через поле `deleted_at`.
+
+## Команды для демонстрации
+
+Запуск:
+
+```bash
+docker compose up -d --build
 ```
 
----
+Проверка контейнеров:
 
-### Проверка кеша профиля пользователя
-
-```redis
-KEYS wp:users:*
+```bash
+docker ps
 ```
 
-Пример результата:
+Проверка Redis:
 
-```text
-1) "wp:users:profile:4"
+```bash
+docker exec -it lab_redis redis-cli -a redis_secure_password_change_me ping
 ```
 
-Проверить TTL:
+Просмотр ключей Redis:
 
-```redis
-TTL wp:users:profile:4
+```bash
+docker exec -it lab_redis redis-cli -a redis_secure_password_change_me keys "*"
 ```
 
-Получить значение:
-
-```redis
-GET wp:users:profile:4
-```
-
-Пример значения:
-
-```json
-"{\"id\": 4, \"email\": \"user@example.com\"}"
-```
-
----
-
-### Проверка JTI access-токена
-
-```redis
-KEYS wp:auth:*
-```
-
-Пример результата:
-
-```text
-1) "wp:auth:user:4:access:51bff96e70c7474ab6b2c3c44c7d57a5"
-```
-
-Проверить TTL:
-
-```redis
-TTL wp:auth:user:4:access:51bff96e70c7474ab6b2c3c44c7d57a5
-```
-
-Пример результата:
-
-```text
-(integer) 786
-```
-
----
-
-### Проверка logout
-
-После выполнения:
-
-```text
-POST /auth/logout
-```
-
-проверить Redis:
-
-```redis
-KEYS wp:*
-```
-
-Ожидаемый результат:
-
-```text
-(empty array)
-```
-
-Если были созданы только auth/profile ключи текущего пользователя, после logout они должны исчезнуть.
-
----
-
-### Очистка Redis для тестов
-
-```redis
-FLUSHDB
-```
-
----
-
-## Swagger / OpenAPI документация
-
-В режиме разработки Swagger UI доступен по адресу:
-
-```text
-http://localhost:8000/api/docs
-```
-
-OpenAPI JSON доступен по адресу:
-
-```text
-http://localhost:8000/openapi.json
-```
-
-ReDoc доступен по адресу:
-
-```text
-http://localhost:8000/redoc
-```
-
-Документация содержит:
-
-- группы endpoints;
-- DTO-схемы;
-- примеры запросов;
-- примеры ответов;
-- описания ошибок;
-- cookie-based авторизацию;
-- OAuth2 flow через Yandex ID.
-
----
-
-## Production-режим
-
-Документация доступна только в режиме разработки.
-
-В `.env`:
-
-```env
-APP_ENV=development
-```
-
-Swagger доступен:
-
-```text
-http://localhost:8000/api/docs
-```
-
-Для проверки production-режима нужно изменить `.env`:
-
-```env
-APP_ENV=production
-```
-
-Перезапустить контейнеры:
+Остановка:
 
 ```bash
 docker compose down
-docker compose up --build -d
 ```
 
-После этого документация должна быть недоступна:
-
-```text
-http://localhost:8000/api/docs      → 404 Not Found
-http://localhost:8000/redoc         → 404 Not Found
-http://localhost:8000/openapi.json  → 404 Not Found
-```
-
-При этом основное API продолжает работать:
-
-```text
-http://localhost:8000/
-```
-
-После проверки production-режима нужно вернуть:
-
-```env
-APP_ENV=development
-```
-
----
-
-## Yandex OAuth
-
-В проекте реализован OAuth-вход через **Yandex ID**.
-
-Основной OAuth flow начинается через endpoint:
-
-```text
-GET /auth/oauth/yandex
-```
-
-Или напрямую в браузере:
-
-```text
-http://localhost:8000/auth/oauth/yandex
-```
-
-Далее:
-
-1. Backend генерирует `oauth_state`.
-2. `oauth_state` сохраняется в `HttpOnly` cookie.
-3. Пользователь перенаправляется на страницу авторизации Яндекса.
-4. После подтверждения Яндекс возвращает пользователя на backend callback.
-5. Backend проверяет `state`.
-6. Backend получает данные пользователя от Яндекса.
-7. Backend создает или находит локального пользователя.
-8. Backend создает JWT access и refresh tokens.
-9. Access token получает уникальный `jti`.
-10. JTI access-токена сохраняется в Redis.
-11. Backend устанавливает `access_token` и `refresh_token` в `HttpOnly` cookies.
-12. Пользователь перенаправляется на `CLIENT_URL`.
-
-После этого можно проверить авторизацию:
-
-```text
-GET /auth/whoami
-```
-
-Ожидаемый результат:
-
-```text
-200 OK
-```
-
----
-
-## Безопасность
-
-В проекте реализованы следующие меры безопасности:
-
-| Механизм | Реализация |
-| --- | --- |
-| Хранение паролей | Только хеш + соль |
-| Уникальная соль | Генерируется для каждого пользователя |
-| Access Token | JWT, короткий срок жизни |
-| Refresh Token | JWT, длительный срок жизни |
-| Передача токенов | Через `HttpOnly` cookies |
-| Хранение токенов в БД | В БД хранится только хеш токена |
-| JTI access token | В Redis хранится только идентификатор токена |
-| Полный access token в Redis | Не хранится |
-| Пароли в Redis | Не хранятся |
-| TTL ключей Redis | Используется для всех ключей |
-| Redis password | Подключение защищено паролем |
-| Logout | Удаляет JTI из Redis и помечает токены revoked в БД |
-| Logout all | Удаляет все JTI пользователя и отзывает токены в БД |
-| OAuth CSRF protection | Используется параметр `state` |
-| Reset password | Reset token хранится в БД в виде хеша |
-| Items ownership | Проверка `owner_id` |
-| Swagger в production | Отключается через `APP_ENV=production` |
-
----
-
-## Миграции базы данных
-
-Миграции выполняются через Alembic.
-
-Применить миграции:
-
-```bash
-docker exec -it lab_app python -m alembic upgrade head
-```
-
-Создать новую миграцию:
-
-```bash
-docker exec -it lab_app python -m alembic revision --autogenerate -m "migration name"
-```
-
-Основные таблицы:
-
-| Таблица | Назначение |
-| --- | --- |
-| `users` | Пользователи |
-| `auth_tokens` | Хеши access/refresh токенов |
-| `items` | CRUD-ресурсы |
-| `password_reset_tokens` | Хеши reset-токенов |
-
----
-
-## Проверка данных в БД
-
-### Проверка пользователей
-
-```sql
-SELECT id, email, password_hash, password_salt, yandex_id, created_at
-FROM users
-ORDER BY id ASC;
-```
-
-Пароли не должны храниться в открытом виде.
-
----
-
-### Проверка токенов
-
-```sql
-SELECT id, user_id, token_type, token_hash, expires_at, revoked
-FROM auth_tokens
-ORDER BY id DESC;
-```
-
-В БД не должно быть исходных JWT, только их хеши.
-
----
-
-### Проверка reset token
-
-```sql
-SELECT id, user_id, token_hash, expires_at, used
-FROM password_reset_tokens
-ORDER BY id DESC;
-```
-
-Reset token также хранится в виде хеша.
-
----
-
-### Проверка Soft Delete
-
-```sql
-SELECT id, owner_id, name, description, deleted_at
-FROM items
-ORDER BY id ASC;
-```
-
-Удаленные записи остаются в базе, но имеют заполненное поле `deleted_at`.
-
----
 
 ## Контрольные вопросы
 
-### 1. В чем разница между Cache-Aside и Write-Through?
+### 1. В чем заключается основное отличие документоориентированной базы данных от реляционной?
 
-**Cache-Aside** — приложение само управляет кешем.
+Реляционная база данных хранит данные в таблицах, состоящих из строк и столбцов. Структура данных заранее задаётся схемой таблиц, а связи между сущностями обычно реализуются через внешние ключи.
 
-Сначала оно проверяет кеш. Если данных нет, получает их из БД, кладет в кеш и возвращает клиенту.
+Документоориентированная база данных хранит данные в виде документов. В MongoDB документы имеют BSON-формат и по структуре похожи на JSON-объекты. Один документ может содержать вложенные поля, массивы и связанные данные внутри себя.
 
-```text
-Read:
-App → Redis
-если miss:
-App → PostgreSQL → Redis → Client
+Главное отличие заключается в модели хранения данных: PostgreSQL хранит нормализованные данные в таблицах, а MongoDB хранит данные как гибкие документы в коллекциях.
+
+### 2. Что такое BSON и чем он отличается от JSON?
+
+BSON — это бинарный формат хранения документов, который используется в MongoDB. По структуре он похож на JSON, но предназначен не только для передачи данных, а ещё и для эффективного хранения и обработки внутри базы данных.
+
+Основные отличия BSON от JSON:
+
+* BSON хранится в бинарном виде;
+* BSON поддерживает дополнительные типы данных, например `ObjectId`, `Date`, `Decimal128`, бинарные данные;
+* JSON является текстовым форматом;
+* BSON лучше подходит для внутреннего хранения документов в MongoDB.
+
+Например, в API пользователь видит обычный JSON:
+
+```json
+{
+  "id": "6a185bdd31e44f77c4b1994e",
+  "email": "test@example.com"
+}
 ```
 
-**Write-Through** — данные записываются в кеш и базу одновременно через единый слой записи.
+А внутри MongoDB документ хранится в BSON и имеет `_id` типа `ObjectId`.
 
-При такой стратегии кеш обновляется сразу во время записи.
+### 3. Какие преимущества и недостатки имеет встраивание документов (Embedding) по сравнению со ссылками (References) в MongoDB?
 
-В данной лабораторной работе используется стратегия **Cache-Aside**.
+Embedding — это подход, при котором связанные данные хранятся внутри одного документа.
 
----
+Преимущества embedding:
 
-### 2. Что такое Thundering Herd problem?
+* данные можно получить одним запросом;
+* меньше обращений к базе данных;
+* удобно для часто читаемых связанных данных;
+* хорошая производительность чтения.
 
-**Thundering Herd problem** — ситуация, когда много клиентов одновременно запрашивают один и тот же ключ после его истечения.
+Недостатки embedding:
 
-Например:
+* документ может стать слишком большим;
+* одни и те же данные могут дублироваться;
+* сложнее обновлять вложенные данные, если они используются в разных местах;
+* есть ограничение MongoDB на максимальный размер документа.
 
-```text
-Популярный ключ истек.
-1000 запросов одновременно получили cache miss.
-Все 1000 запросов пошли в PostgreSQL.
-База получила резкий скачок нагрузки.
-```
+References — это подход, при котором один документ хранит идентификатор другого документа.
 
-Кеш может как помочь, так и усугубить проблему.
+Преимущества references:
 
-Он помогает снижать нагрузку при cache hit, но при массовом cache miss может создать резкий всплеск запросов к базе.
+* меньше дублирования данных;
+* удобнее хранить большие и независимые сущности;
+* проще обновлять данные, которые используются в разных местах.
 
----
+Недостатки references:
 
-### 3. Почему не рекомендуется использовать `KEYS *` в production?
+* для получения связанных данных нужно делать дополнительные запросы;
+* в MongoDB нет привычных SQL JOIN;
+* часть логики связывания данных переносится на уровень приложения.
 
-Команда `KEYS *` сканирует все ключи Redis сразу.
+В моём проекте используется подход со ссылками: у `Item` хранится `owner_id`, который содержит ID пользователя.
 
-На маленькой учебной базе это удобно, но в production это опасно:
+### 4. Как обеспечивается целостность данных в MongoDB по сравнению с PostgreSQL?
 
-- команда может выполняться долго;
-- Redis однопоточный;
-- другие запросы могут ждать завершения `KEYS`;
-- возможна деградация производительности.
+В PostgreSQL целостность данных обычно обеспечивается на уровне базы данных:
 
-В коде лучше использовать `SCAN`, поэтому в проекте для удаления по паттерну используется:
+* строгими типами столбцов;
+* внешними ключами;
+* ограничениями `NOT NULL`, `UNIQUE`, `CHECK`;
+* транзакциями;
+* связями между таблицами.
 
-```text
-scan_iter(match=pattern)
-```
+В MongoDB схема более гибкая. Документы в одной коллекции могут иметь разную структуру. Поэтому часть ответственности переносится на приложение и ODM.
 
----
+В моём проекте целостность обеспечивается через:
 
-### 4. Как обеспечить согласованность данных между БД и кешем при одновременной записи?
+* Pydantic-схемы;
+* Beanie-модели;
+* валидацию входных данных в FastAPI;
+* уникальные индексы, например для email;
+* проверку `owner_id` при доступе к items;
+* soft delete через поле `deleted_at`.
 
-Основной способ — инвалидировать или обновлять кеш сразу после успешной записи в БД.
+MongoDB также поддерживает транзакции, но в простых CRUD-сценариях часто достаточно валидации на уровне приложения и правильной структуры документов.
 
-В этом проекте используется подход:
+### 5. Что произойдет, если попытаться записать данные неверного типа в поле, объявленное в схеме ODM?
 
-```text
-1. Изменить данные в PostgreSQL.
-2. Выполнить commit.
-3. Удалить связанные ключи Redis.
-4. Следующий GET заново заполнит кеш актуальными данными.
-```
+Если используется ODM, например Beanie, то данные проходят валидацию через Pydantic-модель. Если передать значение неверного типа, то возникнет ошибка валидации.
 
-Такой подход уменьшает риск того, что пользователь получит устаревшие данные.
-
----
-
-### 5. Зачем нужен TTL, если есть инвалидация кеша?
-
-TTL нужен как дополнительная страховка.
-
-Даже если инвалидация где-то не сработает, ключ не будет жить бесконечно.
-
-Через заданное время Redis сам удалит устаревшие данные.
-
-TTL также помогает:
-
-- ограничивать использование памяти;
-- автоматически очищать старые ключи;
-- снижать риск вечного хранения неактуальных данных.
-
----
-
-### 6. Почему хранение JTI в Redis позволяет реализовать мгновенный logout?
-
-JWT обычно stateless.
-
-Если токен подписан правильно и срок действия не истек, приложение считает его валидным.
-
-JTI решает эту проблему.
-
-Access token получает уникальный идентификатор:
-
-```text
-jti
-```
-
-Этот JTI сохраняется в Redis.
-
-При каждом защищенном запросе приложение проверяет, существует ли JTI в Redis.
-
-Если пользователь делает logout, ключ JTI удаляется:
-
-```text
-wp:auth:user:{user_id}:access:{jti}
-```
-
-После этого токен больше не принимается, даже если его `exp` еще не истек.
-
----
-
-### 7. Какие данные безопасно кешировать, а какие нет?
-
-Безопасно кешировать:
-
-- ID пользователя;
-- email;
-- список items;
-- публичные или несекретные поля ресурсов;
-- JTI access-токена;
-- технические значения вроде `valid`.
-
-Нельзя кешировать:
-
-- пароль;
-- хеш пароля;
-- соль пароля;
-- полный access token;
-- полный refresh token;
-- reset token;
-- чувствительные персональные данные без необходимости.
-
----
-
-### 8. Как повлияет перезапуск Redis на работу приложения?
-
-Redis используется как вспомогательный слой.
-
-Если Redis перезапустится:
-
-- часть кеша может быть потеряна;
-- первые запросы снова пойдут в PostgreSQL;
-- кеш постепенно заполнится заново.
-
-В проекте включен AOF:
-
-```text
---appendonly yes
-```
-
-Это позволяет Redis сохранять данные на диск.
-
-Но приложение не должно полностью зависеть от кеша: основным источником данных остается PostgreSQL.
-
----
-
-### 9. Что такое сериализация и зачем она нужна при сохранении объектов в Redis?
-
-Redis хранит значения в виде строк.
-
-Python-объекты, например SQLAlchemy-модели, нельзя напрямую сохранить в Redis.
-
-Поэтому объект преобразуется в словарь, а затем в JSON-строку:
-
-```text
-Python object → dict → JSON string → Redis
-```
-
-При чтении происходит обратное преобразование:
-
-```text
-Redis string → JSON → Python dict
-```
-
-В проекте для этого используются:
+Например, если поле ожидает строку:
 
 ```python
-json.dumps()
-json.loads()
+name: str
 ```
 
----
+а передать объект или значение неподходящего типа, ODM/Pydantic может отклонить такие данные до записи в MongoDB.
 
-### 10. Как префиксы ключей помогают в управлении кешем?
+В FastAPI это обычно приводит к ответу `422 Unprocessable Entity`, если ошибка возникла на уровне входной схемы запроса. Если ошибка возникла внутри приложения при создании документа, то будет исключение валидации.
 
-Префиксы помогают структурировать ключи и избегать конфликтов.
+### 6. Как влияет отсутствие JOIN-ов на проектирование структуры данных в MongoDB?
 
-В проекте используется общий префикс:
+В PostgreSQL данные часто нормализуются: сущности хранятся в отдельных таблицах, а потом объединяются через `JOIN`.
 
-```text
-wp:
+В MongoDB привычных SQL JOIN-ов нет, поэтому структуру данных нужно проектировать иначе. Нужно заранее думать, как данные будут читаться чаще всего.
+
+Из-за отсутствия JOIN-ов есть два основных подхода:
+
+* встраивать связанные данные внутрь документа;
+* хранить ссылки на другие документы и делать дополнительные запросы на уровне приложения.
+
+Это влияет на проектирование: если данные часто нужны вместе, их выгодно встроить. Если сущности независимые или часто изменяются отдельно, лучше использовать ссылки.
+
+В моём проекте используется ссылка: `Item` хранит `owner_id`, который указывает на пользователя.
+
+### 7. Зачем нужны индексы в MongoDB и как они влияют на производительность записи?
+
+Индексы нужны для ускорения поиска, сортировки и проверки уникальности. Без индекса MongoDB должна просматривать много документов в коллекции, что медленно при большом количестве данных.
+
+Например, индекс по `email` позволяет быстро найти пользователя при логине:
+
+```python
+email: Indexed(str, unique=True)
 ```
 
-Примеры:
+Но у индексов есть и минус: они замедляют запись. Когда MongoDB добавляет или обновляет документ, ей нужно обновить не только сам документ, но и все связанные индексы.
 
-```text
-wp:items:list:user:4:limit:10:offset:0
-wp:users:profile:4
-wp:auth:user:4:access:51bff96e70c7474ab6b2c3c44c7d57a5
+То есть индексы ускоряют чтение, но могут снижать скорость вставки и обновления данных.
+
+### 8. Как реализовать уникальность поля, например email, в MongoDB?
+
+Уникальность поля в MongoDB реализуется через уникальный индекс.
+
+В Beanie это можно описать прямо в модели:
+
+```python
+email: Indexed(str, unique=True)
 ```
 
-Так можно удобно искать и удалять связанные ключи:
+Такой индекс не позволит создать двух пользователей с одинаковым email.
 
-```redis
-KEYS wp:items:*
-KEYS wp:auth:*
-KEYS wp:users:*
+В моём проекте при регистрации дополнительно выполняется проверка:
+
+```python
+existing_user = await User.find_one(User.email == data.email)
 ```
 
----
+Если пользователь уже существует, API возвращает ошибку `409 Conflict`.
 
-### 11. Зачем защищать Redis паролем даже внутри Docker-сети?
+То есть уникальность обеспечивается двумя уровнями:
 
-Redis может содержать важные данные:
+* проверкой в коде приложения;
+* уникальным индексом в MongoDB.
 
-- идентификаторы активных сессий;
-- кеш пользовательских данных;
-- технические ключи приложения.
+### 10. Какие сценарии использования существуют для MongoDB, а какие для PostgreSQL?
 
-Даже если Redis находится внутри Docker-сети, защита паролем снижает риск несанкционированного доступа при неправильной настройке сети, пробросе портов или компрометации соседнего контейнера.
+MongoDB хорошо подходит для случаев, когда:
 
-В проекте Redis запускается с параметром:
+* структура данных гибкая и может часто изменяться;
+* данные удобно хранить в виде документов;
+* нужны вложенные объекты и массивы;
+* важна высокая скорость чтения документов;
+* приложение работает с JSON-подобными данными;
+* данные не всегда имеют строго одинаковую структуру.
 
-```text
---requirepass ${REDIS_PASSWORD}
-```
+Примеры: каталоги товаров, профили пользователей, логи, события, CMS, данные с гибкой структурой.
 
----
+PostgreSQL хорошо подходит для случаев, когда:
 
-## Автор
+* нужна строгая схема данных;
+* важна сложная аналитика;
+* нужно много связей между таблицами;
+* нужны сложные SQL-запросы и JOIN;
+* важна строгая транзакционность;
+* данные хорошо укладываются в таблицы.
 
-Путинцев С.Р.  
-090304-РПИб-о23
+Примеры: банковские системы, бухгалтерия, CRM, ERP, системы заказов, финансовые операции, аналитические отчёты.
+
+В рамках лабораторной работы MongoDB используется для демонстрации документоориентированного подхода и миграции слоя хранения данных с PostgreSQL на NoSQL-базу.
