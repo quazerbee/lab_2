@@ -299,21 +299,138 @@ docker ps
 
 Проверка Redis:
 
-```bash
+Проверить Redis ping:
+
 docker exec -it lab_redis redis-cli -a redis_secure_password_change_me ping
-```
 
-Просмотр ключей Redis:
+Ожидаемо:
 
-```bash
-docker exec -it lab_redis redis-cli -a redis_secure_password_change_me keys "*"
-```
+PONG
 
-Остановка:
+1. Зайти в Redis CLI
+docker exec -it lab_redis redis-cli -a redis_secure_password_change_me
 
-```bash
-docker compose down
-```
+Должно появиться:
+
+127.0.0.1:6379>
+
+Проверить, что пусто:
+
+KEYS wp:*
+
+Ожидаемо:
+
+(empty array)
+
+7. Проверить, что login создает JTI
+
+В Swagger:
+
+POST /auth/login
+
+В Redis:
+
+KEYS wp:auth:*
+
+Ожидаемо ключ вида:
+
+wp:auth:user:4:access:51bff96e70c7474ab6b2c3c44c7d57a5
+
+Проверить TTL:
+
+TTL wp:auth:user:4:access:51bff96e70c7474ab6b2c3c44c7d57a5
+
+Ожидаемо число до 900, например:
+
+(integer) 786
+
+Проверка кеша /auth/whoami
+8. Проверить, что whoami создает кеш профиля
+
+После login в Swagger:
+
+GET /auth/whoami
+
+В Redis:
+
+KEYS wp:users:*
+
+Ожидаемо:
+
+wp:users:profile:4
+
+Проверить TTL:
+
+TTL wp:users:profile:4
+
+Ожидаемо число до 300, например:
+
+(integer) 274
+
+Посмотреть значение:
+
+GET wp:users:profile:4
+
+Ожидаемо:
+
+"{\"id\": 4, \"email\": \"user@example.com\"}"
+
+Проверка кеша /items
+2. Проверить, что GET /items создает кеш
+
+В Swagger:
+
+POST /auth/login
+
+Потом:
+
+GET /items?limit=10&offset=0
+
+В Redis CLI:
+
+KEYS wp:items:*
+
+Ожидаемо появится ключ вида:
+
+wp:items:list:user:4:limit:10:offset:0
+
+Проверить TTL:
+
+TTL wp:items:list:user:4:limit:10:offset:0
+
+Ожидаемо число, например:
+
+(integer) 176
+
+Посмотреть значение:
+
+GET wp:items:list:user:4:limit:10:offset:0
+
+Проверка logout
+9. Проверить, что logout удаляет JTI и профиль
+
+Перед logout в Redis должно быть примерно так:
+
+KEYS wp:*
+
+Ожидаемо:
+
+wp:auth:user:4:access:...
+wp:users:profile:4
+
+В Swagger:
+
+POST /auth/logout
+
+После logout в Redis:
+
+KEYS wp:*
+
+Ожидаемо:
+
+(empty array)
+
+
 
 
 ## Контрольные вопросы
