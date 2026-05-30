@@ -7,6 +7,8 @@ from fastapi.responses import JSONResponse
 
 from app.database import init_db, check_db_connection
 from app.routers.item_router import router as item_router
+from app.routers.file_router import router as file_router
+from app.routers.profile_router import router as profile_router
 from app.auth.router import router as auth_router
 
 
@@ -31,8 +33,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Lab Project API",
-    description="Документация API для лабораторной работы №6: MongoDB вместо PostgreSQL",
-    version="6.0.0",
+    description="Документация API для лабораторной работы №7: MinIO Object Storage",
+    version="7.0.0",
     docs_url=None if is_production else "/api/docs",
     redoc_url=None if is_production else "/redoc",
     openapi_url=None if is_production else "/openapi.json",
@@ -44,6 +46,8 @@ app = FastAPI(
 )
 
 app.include_router(item_router)
+app.include_router(file_router)
+app.include_router(profile_router)
 app.include_router(auth_router)
 
 

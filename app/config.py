@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     YANDEX_CALLBACK_URL: str = "http://localhost:8000/auth/oauth/yandex/callback"
     CLIENT_URL: str = "http://localhost:8000/api/docs"
 
+    MINIO_ENDPOINT: str = "minio:9000"
+    MINIO_ACCESS_KEY: str = "minio_admin"
+    MINIO_SECRET_KEY: str = "minio_secure_password_change_in_prod"
+    MINIO_BUCKET: str = "wp-labs-files"
+    MINIO_USE_SSL: bool = False
+    MAX_FILE_SIZE: int = 10485760
+
     model_config = SettingsConfigDict(
         env_file=".env",
         extra="ignore",

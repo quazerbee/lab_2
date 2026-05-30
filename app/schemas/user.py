@@ -15,6 +15,21 @@ class UserResponse(BaseModel):
         description="Email пользователя",
         examples=["user@example.com"],
     )
+    display_name: Optional[str] = Field(
+        default=None,
+        description="Отображаемое имя пользователя",
+        examples=["Ivan Ivanov"],
+    )
+    bio: Optional[str] = Field(
+        default=None,
+        description="Краткое описание профиля пользователя",
+        examples=["Backend developer"],
+    )
+    avatar_file_id: Optional[str] = Field(
+        default=None,
+        description="ID файла аватара пользователя",
+        examples=["7f28f74e-b6b9-47bc-9c4a-37f8b00d6dbd"],
+    )
     created_at: datetime = Field(
         ...,
         description="Дата и время создания пользователя",
@@ -30,6 +45,46 @@ class UserResponse(BaseModel):
         description="Дата soft delete пользователя. Если пользователь не удалён, значение равно null.",
         examples=[None],
     )
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def convert_object_id_to_str(cls, value):
+        return str(value)
+
+    class Config:
+        from_attributes = True
+
+
+class ProfileUpdate(BaseModel):
+    display_name: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=100,
+        description="Отображаемое имя пользователя",
+        examples=["Ivan Ivanov"],
+    )
+    bio: Optional[str] = Field(
+        default=None,
+        max_length=500,
+        description="Краткое описание пользователя",
+        examples=["Backend developer"],
+    )
+    avatar_file_id: Optional[str] = Field(
+        default=None,
+        description="ID файла, который нужно установить как аватар",
+        examples=["7f28f74e-b6b9-47bc-9c4a-37f8b00d6dbd"],
+    )
+
+
+class ProfileResponse(BaseModel):
+    id: str
+    email: EmailStr
+    display_name: Optional[str] = None
+    bio: Optional[str] = None
+    avatar_file_id: Optional[str] = None
+    avatar_url: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
 
     @field_validator("id", mode="before")
     @classmethod

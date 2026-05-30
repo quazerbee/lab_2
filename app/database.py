@@ -8,6 +8,7 @@ from app.models.item import Item
 from app.models.user import User
 from app.models.auth_token import AuthToken
 from app.models.password_reset_token import PasswordResetToken
+from app.models.file import File
 
 load_dotenv()
 
@@ -32,6 +33,7 @@ async def init_db() -> None:
             User,
             AuthToken,
             PasswordResetToken,
+            File,
         ],
     )
 
